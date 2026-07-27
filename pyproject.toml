@@ -1,0 +1,25 @@
+[project]
+name = "autohh"
+version = "1.0.0"
+description = "Telegram-managed auto-apply bot for HH.ru with Gemini AI"
+requires-python = ">=3.10"
+dependencies = [
+    "aiogram>=3.0.0",
+    "aiohttp-socks>=0.8.0",
+    "playwright==1.41.0",
+    "pydantic>=2.5.0",
+    "pydantic-settings>=2.1.0",
+    "python-dotenv>=1.0.0",
+    "aiosqlite>=0.19.0",
+    "google-genai>=1.0.0",
+]
+
+[project.scripts]
+autohh = "autohh.__main__:main"
+
+[tool.setuptools.packages.find]
+include = ["autohh*"]
+
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
