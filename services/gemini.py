@@ -4,6 +4,7 @@ import re
 
 import httpx
 from google import genai
+from google.genai import types
 
 from ..config import get_settings
 from ..models import VacancyAnalysis
@@ -11,18 +12,52 @@ from ..models import VacancyAnalysis
 logger = logging.getLogger(__name__)
 
 DEFAULT_COVER_PROMPT = (
-    "Generate a short cover letter for: {title} at {employer}\n"
-    "Requirements: {description}\n"
-    "My resume summary: {resume}\n"
-    "2-3 sentences, no greetings, professional but casual, Russian."
+    "Напиши сопроводительное письмо к отклику на вакансию.\n"
+    "Вакансия: {title}\n"
+    "Компания: {employer}\n"
+    "Описание вакансии: {description}\n"
+    "Моё резюме: {resume}\n\n"
+    "Стиль:\n"
+    "- Пиши как живой человек, а не как HR-бот\n"
+    "- 2-4 предложения максимум\n"
+    "- Начни с короткого приветствия (Здравствуйте / Добрый день)\n"
+    "- Без восклицательных знаков и пафоса\n"
+    "- Конкретно: назови 2-3 навыка из резюме которые подходят\n"
+    "- Если навыков мало — честно скажи что готов изучать, не придумывай\n"
+    "- Последнее предложение — что готов к собеседованию\n"
+    "- Не повторяй описание вакансию слово в слово\n"
+    "- На русском языке"
 )
 
 DEFAULT_ANALYSIS_PROMPT = (
-    "Rate relevance of vacancy: {title} at {employer}\n"
-    "Description: {description}\n"
-    "Salary: {salary}\n"
-    "My resume: {resume}\n"
-    'Return JSON: {{"relevance": 0-10, "salary_match": bool, "summary": "...", "apply": bool}}'
+    "Ты строгий рекрутер. Не завышай оценки. Будь честен.\n\n"
+    "ВАКАНСИЯ:\n"
+    "Должность: {title}\n"
+    "Компания: {employer}\n"
+    "Описание и требования:\n{description}\n"
+    "Зарплата: {salary}\n\n"
+    "РЕЗЮМЕ КАНДИДАТА:\n{resume}\n\n"
+    "ШКАЛА ОЦЕНКИ (строго):\n"
+    "10 — полное совпадение: опыт, технологии, уровень\n"
+    "7-9 — есть релевантный опыт, основные технологии совпадают\n"
+    "4-6 — частичное совпадение, есть похожий опыт или часть навыков\n"
+    "1-3 — мало общего, нет опыта или навыков\n\n"
+    "ВАЖНЫЕ ПРАВИЛА:\n"
+    "- Если в резюме нет опыта работы по направлению — maximum 3\n"
+    "- Если в резюме стажёр/ junior, а вакансия mid/senior — maximum 4\n"
+    "- Если описания вакансии нет или оно пустое — relevance = 3, apply = false\n"
+    "- Если вакансия не по профилю (учитель, продавец, водитель) — apply = false\n"
+    "- Не ставь высокие оценки за ' potential' — оценивай реальный опыт\n"
+    "- Совпадение по 1-2 навыкам из 10 требуемых — это maximum 4\n\n"
+    "ОТСЕЧЕНИЕ (apply=false если):\n"
+    "- Нет описания или описание пустое\n"
+    "- Вакансия не по специальности\n"
+    "- Требуемый опыт明显не совпадает с резюме\n"
+    "- Стажировка при наличии опыта\n"
+    "- В описании нет конкретных требований\n\n"
+    "ВЕРНИ JSON строго:\n"
+    '{{"relevance": число 1-10, "salary_match": true/false, "summary": "одно предложение до 60 символов", "apply": true/false}}\n\n'
+    "summary — коротко и по делу, без кавычек."
 )
 
 
@@ -88,6 +123,12 @@ class GeminiService:
             )
         return self._client
 
+    def _no_afc_config(self, **kwargs) -> types.GenerateContentConfig:
+        return types.GenerateContentConfig(
+            automaticFunctionCalling=types.AutomaticFunctionCallingConfig(disable=True),
+            **kwargs,
+        )
+
     async def generate_cover_letter(
         self, vacancy: dict, prompt_template: str = "", resume_text: str = ""
     ) -> str:
@@ -109,6 +150,7 @@ class GeminiService:
             response = client.models.generate_content(
                 model=self._model,
                 contents=prompt,
+                config=self._no_afc_config(),
             )
             text = response.text.strip()
             logger.info(f"[GEMINI] Cover letter FULL response:\n{'='*60}\n{text}\n{'='*60}")
@@ -142,6 +184,7 @@ class GeminiService:
             response = client.models.generate_content(
                 model=self._model,
                 contents=prompt,
+                config=self._no_afc_config(),
             )
             text = response.text.strip()
             logger.info(f"[GEMINI] Analysis FULL response:\n{'='*60}\n{text}\n{'='*60}")

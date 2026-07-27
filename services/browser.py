@@ -36,6 +36,11 @@ class BrowserManager:
                 self._browser = await self._playwright.chromium.launch(**launch_args)
                 logger.info("Browser launched")
 
+    async def _ensure_browser(self):
+        if not self._browser:
+            await self.start()
+        return self._browser
+
     async def stop(self) -> None:
         async with self._lock:
             if self._browser:
@@ -84,6 +89,26 @@ class BrowserManager:
         finally:
             if context:
                 await context.close()
+
+    async def create_run_context(self) -> tuple[BrowserContext, Page]:
+        if not self._browser:
+            await self.start()
+
+        ctx_args = {
+            "viewport": get_random_viewport(),
+            "user_agent": get_random_user_agent(),
+        }
+
+        if self._settings.session_file.exists():
+            ctx_args["storage_state"] = str(self._settings.session_file)
+
+        if self._settings.proxy_url:
+            ctx_args["proxy"] = {"server": self._settings.proxy_url}
+
+        context = await self._browser.new_context(**ctx_args)
+        page = await context.new_page()
+        page.set_default_timeout(self._settings.page_timeout)
+        return context, page
 
     @asynccontextmanager
     async def get_interactive_context(

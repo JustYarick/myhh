@@ -4,7 +4,7 @@ from urllib.parse import urlparse, parse_qs
 from ..services.flow_entity import FlowEntity, FlowConfig
 
 
-def main_menu_keyboard(hh_session_ok: bool, flows: list[FlowEntity], active_flow_id: int | None) -> InlineKeyboardMarkup:
+def main_menu_keyboard(hh_session_ok: bool, flows: list[FlowEntity], active_flow_id: int | None, run_state: str = "idle") -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = []
 
     if hh_session_ok:
@@ -18,11 +18,20 @@ def main_menu_keyboard(hh_session_ok: bool, flows: list[FlowEntity], active_flow
         InlineKeyboardButton(text="History", callback_data="history"),
     ])
 
-    rows.append([
-        InlineKeyboardButton(text="Run", callback_data="run"),
-        InlineKeyboardButton(text="Stop", callback_data="stop"),
-        InlineKeyboardButton(text="Pause", callback_data="pause"),
-    ])
+    if run_state == "running":
+        rows.append([
+            InlineKeyboardButton(text="⏸ Pause", callback_data="pause"),
+            InlineKeyboardButton(text="⏹ Stop", callback_data="stop"),
+        ])
+    elif run_state == "paused":
+        rows.append([
+            InlineKeyboardButton(text="▶️ Resume", callback_data="resume"),
+            InlineKeyboardButton(text="⏹ Stop", callback_data="stop"),
+        ])
+    else:
+        rows.append([
+            InlineKeyboardButton(text="▶️ Run", callback_data="run"),
+        ])
 
     rows.append([
         InlineKeyboardButton(text="Settings", callback_data="settings"),

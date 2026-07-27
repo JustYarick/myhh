@@ -115,23 +115,26 @@ async def flow_test_callback(callback: CallbackQuery) -> None:
                     )
                     color = relevance_color(analysis.relevance)
                     parts.append(f"   {bold('AI Analysis')}: {color} {bold(f'{analysis.relevance}/10')} {relevance_bar(analysis.relevance)}")
-                    parts.append(f"   {italic(analysis.summary[:150])}")
-                    apply_text = f"{bold('✅ APPLY')}" if analysis.apply else f"{bold('⏭ SKIP')}"
+                    summary_short = analysis.summary[:80]
+                    if summary_short:
+                        parts.append(f"   {italic(summary_short)}")
+                    should_apply = analysis.relevance >= 4
+                    apply_text = f"{bold('✅ APPLY')}" if should_apply else f"{bold('⏭ SKIP')}"
                     parts.append(f"   {apply_text}")
                 except Exception as e:
                     parts.append(f"   ❌ AI Error: {code(str(e)[:100])}")
 
-                if i == 1:
-                    try:
-                        cover = await gemini_service.generate_cover_letter(
-                            v.model_dump(),
-                            prompt_template=flow.config.cover_letter_prompt,
-                            resume_text=resume_text,
-                        )
+                try:
+                    cover = await gemini_service.generate_cover_letter(
+                        v.model_dump(),
+                        prompt_template=flow.config.cover_letter_prompt,
+                        resume_text=resume_text,
+                    )
+                    if cover:
                         parts.append(f"\n   {bold('📝 Cover Letter')}:")
-                        parts.append(f"   {quote(cover[:300])}")
-                    except Exception as e:
-                        parts.append(f"   ❌ Cover Error: {code(str(e)[:100])}")
+                        parts.append(f"   {quote(cover[:400])}")
+                except Exception as e:
+                    parts.append(f"   ❌ Cover Error: {code(str(e)[:100])}")
 
                 parts.append("")
                 parts.append(divider())

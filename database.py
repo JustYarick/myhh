@@ -50,6 +50,21 @@ async def init_db() -> None:
             )
         """)
 
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS vacancy_cache (
+                vacancy_url TEXT PRIMARY KEY,
+                title TEXT DEFAULT '',
+                employer TEXT DEFAULT '',
+                ai_relevance INTEGER DEFAULT 0,
+                ai_summary TEXT DEFAULT '',
+                result TEXT NOT NULL,
+                processed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_cache_processed ON vacancy_cache(processed_at)"
+        )
+
         await db.execute(
             "CREATE INDEX IF NOT EXISTS idx_vacancy_url ON applied_vacancies(vacancy_url)"
         )
@@ -69,6 +84,48 @@ async def was_vacancy_applied(vacancy_url: str) -> bool:
             (vacancy_url,)
         )
         return await cursor.fetchone() is not None
+
+
+async def is_vacancy_cached(vacancy_url: str, ttl_days: int = 30) -> bool:
+    db_path = _get_db_path()
+    async with aiosqlite.connect(str(db_path)) as db:
+        cursor = await db.execute(
+            """SELECT 1 FROM vacancy_cache
+               WHERE vacancy_url = ?
+               AND processed_at >= datetime('now', ?) LIMIT 1""",
+            (vacancy_url, f"-{ttl_days} days"),
+        )
+        return await cursor.fetchone() is not None
+
+
+async def get_cached_vacancy_result(vacancy_url: str) -> dict | None:
+    db_path = _get_db_path()
+    async with aiosqlite.connect(str(db_path)) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            "SELECT * FROM vacancy_cache WHERE vacancy_url = ?", (vacancy_url,)
+        )
+        row = await cursor.fetchone()
+        return dict(row) if row else None
+
+
+async def cache_vacancy_result(
+    vacancy_url: str,
+    title: str,
+    employer: str,
+    ai_relevance: int,
+    ai_summary: str,
+    result: str,
+) -> None:
+    db_path = _get_db_path()
+    async with aiosqlite.connect(str(db_path)) as db:
+        await db.execute(
+            """INSERT OR REPLACE INTO vacancy_cache
+               (vacancy_url, title, employer, ai_relevance, ai_summary, result, processed_at)
+               VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)""",
+            (vacancy_url, title, employer, ai_relevance, ai_summary, result),
+        )
+        await db.commit()
 
 
 async def save_application(

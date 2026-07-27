@@ -24,32 +24,36 @@ async def _error_reply(message, text: str) -> None:
 
 async def _main_menu_message(message) -> None:
     from ..keyboards import main_menu_keyboard
+    from ...scheduler import scheduler
     hh_ok = hh_auth.session_exists()
     flows = await flow_db.list_flows()
     active_id = await flow_db.get_active_flow_id()
+    run_state = scheduler._run_state.value
     await message.answer(
         "🤖 <b>AutoHH Bot</b>",
         parse_mode="HTML",
-        reply_markup=main_menu_keyboard(hh_ok, flows, active_id),
+        reply_markup=main_menu_keyboard(hh_ok, flows, active_id, run_state),
     )
 
 
 async def _main_menu_callback(callback) -> None:
     from ..keyboards import main_menu_keyboard
+    from ...scheduler import scheduler
     hh_ok = hh_auth.session_exists()
     flows = await flow_db.list_flows()
     active_id = await flow_db.get_active_flow_id()
+    run_state = scheduler._run_state.value
     try:
         await callback.message.edit_text(
             "🤖 <b>AutoHH Bot</b>",
             parse_mode="HTML",
-            reply_markup=main_menu_keyboard(hh_ok, flows, active_id),
+            reply_markup=main_menu_keyboard(hh_ok, flows, active_id, run_state),
         )
     except Exception:
         await callback.message.answer(
             "🤖 <b>AutoHH Bot</b>",
             parse_mode="HTML",
-            reply_markup=main_menu_keyboard(hh_ok, flows, active_id),
+            reply_markup=main_menu_keyboard(hh_ok, flows, active_id, run_state),
         )
 
 

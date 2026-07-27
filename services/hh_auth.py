@@ -425,60 +425,93 @@ class HHAuthService:
             logger.warning(f"Failed to get account name: {e}")
             return ""
 
-    async def get_resumes(self) -> list[HHResume]:
+    async def get_resumes(self) -> list:
+    
         settings = get_settings()
         if not settings.session_file.exists():
+            logger.warning("No session file for get_resumes")
             return []
-
+    
         resumes: list[HHResume] = []
         try:
             async with browser_manager.get_page(use_session=True) as page:
-                await page.goto("https://hh.ru/", wait_until="domcontentloaded", timeout=15000)
-                await asyncio.sleep(2)
-
-                has_captcha = await page.evaluate(
-                    "() => { try { return document.title.toLowerCase().includes('captcha') || document.title.toLowerCase().includes('robot'); } catch(e) { return false; } }"
+                await page.goto(
+                    "https://hh.ru/applicant/resumes",
+                    wait_until="domcontentloaded",
+                    timeout=30000,
                 )
-                if has_captcha:
-                    return []
-
-                data = await page.evaluate("""
-                    async () => {
-                        try {
-                            const resp = await fetch('/shards/applicant/resumes', {
-                                credentials: 'same-origin',
-                                headers: { 'Accept': 'application/json' }
-                            });
-                            if (!resp.ok) return { error: 'status=' + resp.status };
-                            return await resp.json();
-                        } catch(e) {
-                            return { error: 'fetch_exception: ' + e.message };
-                        }
-                    }
-                """)
-
-                if isinstance(data, dict):
-                    if data.get('error'):
+                await asyncio.sleep(3)
+    
+                for sel in [
+                    "iframe[src*='captcha']",
+                    "iframe[src*='smartcaptcha']",
+                    ".SmartCaptcha",
+                ]:
+                    if await page.locator(sel).count() > 0:
+                        logger.warning("Captcha on resumes page")
                         return []
-                    items = data.get('items', data.get('resumes', []))
-                elif isinstance(data, list):
-                    items = data
-                else:
-                    items = []
-
+    
+                page_url = page.url
+                page_title = await page.title()
+                logger.info(f"[get_resumes] page: URL={page_url} title={page_title}")
+    
+                raw = await page.evaluate(
+                    r"""
+                    () => {
+                        const results = [];
+    
+                        // Основной, надёжный путь: карточка резюме = ссылка resume-card-link-<id>
+                        document.querySelectorAll('a[data-qa^="resume-card-link"]').forEach(a => {
+                            const href = a.getAttribute('href') || '';
+                            const m = href.match(/\/resume\/([a-zA-Z0-9]+)/);
+                            if (!m) return;
+                            const id = m[1];
+    
+                            // Реальный заголовок резюме
+                            let title = '';
+                            const titleWrapper = a.querySelector('[data-qa="resume-title"]');
+                            if (titleWrapper) {
+                                const span = titleWrapper.querySelector('span[data-qa="cell-text-content"]');
+                                title = (span ? span.innerText : titleWrapper.innerText).trim();
+                            }
+    
+                            // Категория занятости ("Постоянная работа", "Частичная занятость" и т.п.)
+                            let category = '';
+                            const header = a.querySelector('[data-qa="title-header"]');
+                            if (header) category = header.innerText.trim();
+    
+                            // Фоллбек, если верстка вдруг поменяется
+                            if (!title) {
+                                title = a.innerText.trim().split('\n').filter(Boolean)[0] || '';
+                            }
+    
+                            results.push({ id, title, category, href });
+                        });
+    
+                        return results;
+                    }
+                    """
+                )
+    
+                logger.info(f"[get_resumes] raw results: {len(raw)}")
+                for r in raw[:10]:
+                    logger.info(
+                        f"  -> id={r.get('id')} title={r.get('title')!r} category={r.get('category')!r}"
+                    )
+    
                 seen_ids = set()
-                for item in items:
-                    if isinstance(item, dict):
-                        rid = item.get('id', '')
-                        if rid and rid not in seen_ids:
-                            seen_ids.add(rid)
-                            title = item.get('title', '') or f"Resume {len(resumes)+1}"
-                            status = item.get('status', 'active') or 'active'
-                            resumes.append(HHResume(id=rid, title=title, status=status))
-
+                for item in raw:
+                    rid = item.get("id", "")
+                    if rid and rid not in seen_ids:
+                        seen_ids.add(rid)
+                        title = item.get("title") or f"Resume {len(resumes) + 1}"
+                        resumes.append(HHResume(id=rid, title=title, status="active"))
+                        logger.info(f"[get_resumes] resume: id={rid} title={title!r}")
+    
         except Exception as e:
             logger.error(f"Failed to fetch resumes: {e}", exc_info=True)
-
+    
+        logger.info(f"[get_resumes] total: {len(resumes)} resumes")
         return resumes
 
     async def get_resume_text(self, resume_id: str) -> str:

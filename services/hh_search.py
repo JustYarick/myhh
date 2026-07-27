@@ -8,16 +8,44 @@ from playwright.async_api import Page
 
 from ..models import Vacancy
 from .browser import browser_manager
-from .anti_fraud import AntiFraud
+from .anti_fraud import AntiFraud, get_random_viewport, get_random_user_agent
 
 logger = logging.getLogger(__name__)
 
 
 class HHSearchService:
     async def _check_bot_protection(self, page: Page) -> bool:
-        title = await page.title()
-        content = await page.content()
-        return "captcha" in title.lower() or "robot" in content.lower()
+        try:
+            title = (await page.title()).lower()
+            if "captcha" in title or "smartcaptcha" in title or "подтвердите" in title:
+                logger.warning(f"Captcha detected by title: {title}")
+                return True
+
+            for sel in [
+                "[data-qa*='captcha']",
+                "iframe[src*='captcha']",
+                "iframe[src*='smartcaptcha']",
+                ".SmartCaptcha",
+                "#captcha",
+                "[class*='captcha']",
+                "div[data-testid='captcha']",
+            ]:
+                if await page.locator(sel).count() > 0:
+                    logger.warning(f"Captcha detected by selector: {sel}")
+                    return True
+
+            body_text = await page.evaluate(
+                "() => { const b = document.body; return b ? b.innerText.substring(0, 2000) : ''; }"
+            )
+            body_lower = body_text.lower()
+            if "подтвердите, что вы не робот" in body_lower or "smartcaptcha" in body_lower:
+                logger.warning("Captcha detected by body text")
+                return True
+
+            return False
+        except Exception as e:
+            logger.debug(f"Captcha check error: {e}")
+            return False
 
     async def _get_vacancy_description(self, page: Page, url: str) -> str:
         try:
@@ -146,6 +174,62 @@ class HHSearchService:
         except Exception:
             logger.info("No vacancy cards found on page")
             return False
+
+    async def get_vacancy_description(self, page: Page, url: str) -> str:
+        return await self._get_vacancy_description(page, url)
+
+    async def close_page(self, page: Page) -> None:
+        try:
+            await page.context.__aexit__(None, None, None)
+        except Exception:
+            pass
+
+    async def search_cards(
+        self,
+        anti_fraud: AntiFraud,
+        page_num: int = 0,
+        url: str = "",
+        existing_page: Optional[Page] = None,
+    ) -> tuple[Optional[Page], list[dict], Optional[object]]:
+        if "page=" not in url:
+            sep = "&" if "?" in url else "?"
+            url = f"{url}{sep}page={page_num}"
+        else:
+            url = re.sub(r"page=\d+", f"page={page_num}", url)
+
+        logger.info(f"search_cards: {url}")
+
+        page = existing_page
+        context = None
+
+        if page is None:
+            ctx_args = {
+                "viewport": get_random_viewport(),
+                "user_agent": get_random_user_agent(),
+            }
+            if browser_manager._settings.session_file.exists():
+                ctx_args["storage_state"] = str(browser_manager._settings.session_file)
+            if browser_manager._settings.proxy_url:
+                ctx_args["proxy"] = {"server": browser_manager._settings.proxy_url}
+
+            await browser_manager._ensure_browser()
+            context = await browser_manager._browser.new_context(**ctx_args)
+            page = await context.new_page()
+            page.set_default_timeout(browser_manager._settings.page_timeout)
+
+        await self._go_to_search_page(page, url, anti_fraud)
+
+        count = await self.get_vacancy_count(page)
+        logger.info(f"Count: {count}")
+
+        if not await self._wait_for_vacancies(page):
+            return page, [], context
+
+        await anti_fraud.random_scroll(page)
+        vacancy_data = await self._parse_vacancy_cards(page)
+
+        logger.info(f"Returning {len(vacancy_data)} cards")
+        return page, vacancy_data, context
 
     async def search(
         self,

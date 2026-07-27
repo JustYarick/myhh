@@ -59,12 +59,6 @@ class AntiFraud:
             logger.warning(msg)
             return False, msg
 
-        consecutive_errors = await db.get_consecutive_errors()
-        if consecutive_errors >= 3:
-            msg = f"Consecutive errors: {consecutive_errors}. Pausing."
-            logger.warning(msg)
-            return False, msg
-
         if config.auto_start_hour is not None and config.auto_stop_hour is not None:
             current_hour = datetime.now().hour
             if not (config.auto_start_hour <= current_hour < config.auto_stop_hour):

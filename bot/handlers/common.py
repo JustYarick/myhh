@@ -65,6 +65,7 @@ async def run_callback(callback: CallbackQuery) -> None:
     except Exception as e:
         logger.error(f"Run error: {e}", exc_info=True)
         await callback.answer(f"Error: {e}", show_alert=True)
+    await _main_menu_callback(callback)
 
 
 @common_router.callback_query(F.data == "stop")
@@ -76,6 +77,7 @@ async def stop_callback(callback: CallbackQuery) -> None:
         await scheduler.stop()
     except Exception as e:
         logger.error(f"Stop error: {e}", exc_info=True)
+    await _main_menu_callback(callback)
 
 
 @common_router.callback_query(F.data == "pause")
@@ -87,6 +89,7 @@ async def pause_callback(callback: CallbackQuery) -> None:
         await scheduler.pause()
     except Exception as e:
         logger.error(f"Pause error: {e}", exc_info=True)
+    await _main_menu_callback(callback)
 
 
 @common_router.callback_query(F.data == "resume")
@@ -98,6 +101,7 @@ async def resume_callback(callback: CallbackQuery) -> None:
         await scheduler.resume()
     except Exception as e:
         logger.error(f"Resume error: {e}", exc_info=True)
+    await _main_menu_callback(callback)
 
 
 @common_router.callback_query(F.data == "stats")
