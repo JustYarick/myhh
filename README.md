@@ -1,100 +1,87 @@
-# AutoHH - Auto-apply to HH.ru with AI
+# AutoHH - Автоматический отклик на вакансии HH.ru с использованием ИИ
 
-Telegram-managed auto-apply bot for HH.ru with Gemini AI cover letters and vacancy analysis.
+Telegram-бот для автоматической рассылки откликов на вакансии HH.ru. Проект использует модель ИИ Gemini для генерации персонализированных сопроводительных писем и оценки релевантности вакансий.
 
-## Features
+---
 
-- Auto-apply to HH.ru vacancies
-- Gemini AI generates cover letters (2-3 sentences, human-like)
-- AI analyzes and filters vacancies by relevance
-- Full control via Telegram bot
-- Anti-fraud: random delays, rate limits, UA rotation
-- Docker deployment
-- SQLite for history and stats
+## Важные требования для работы
 
-## Setup
+1. **Минимум 2 резюме на аккаунте**: На вашем аккаунте HH.ru должно быть создано как минимум два резюме. Это техническое требование, необходимое для того, чтобы при клике на кнопку отклика сайт вызывал модальное окно выбора резюме, которое бот использует для привязки.
+2. **Авторизация только через Telegram**: Ввод логина (телефона или почты) и кода подтверждения (OTP) осуществляется исключительно через интерфейс Telegram-бота. Консольная авторизация не требуется и полностью удалена из проекта.
 
-### 1. Clone and configure
+---
 
+## Быстрый старт
+
+### 1. Подготовка конфигурации
+Скопируйте пример файла конфигурации и переименуйте его:
 ```bash
 cp .env.example .env
-# Edit .env with your tokens:
-# - TG_BOT_TOKEN: from @BotFather
-# - TG_ALLOWED_USERS: your Telegram user ID
-# - GEMINI_API_KEY: from Google AI Studio
 ```
+Откройте файл `.env` в текстовом редакторе и укажите обязательные переменные:
+* `TG_BOT_TOKEN` - токен вашего Telegram-бота, полученный у @BotFather.
+* `TG_ALLOWED_USERS` - список числовых Telegram ID через запятую, которым разрешен доступ к боту.
+* `GEMINI_API_KEY` - API-ключ Gemini, полученный в Google AI Studio.
 
-### 2. Start with Docker
-
+### 2. Запуск контейнеров
+Запустите проект в фоновом режиме через docker-compose:
 ```bash
-docker-compose up -d
+docker-compose up -d --build
 ```
 
-### 3. Login to HH.ru
+### 3. Авторизация в HH.ru через Telegram
+1. Перейдите в ваш Telegram-бот и отправьте команду `/start`.
+2. В появившемся меню перейдите в раздел настроек или авторизации.
+3. Введите адрес электронной почты или номер телефона, привязанный к вашему аккаунту HH.ru.
+4. После запроса от бота введите одноразовый код (OTP), отправленный вам сервисом HH.ru.
+5. Сессия будет автоматически сохранена в директорию `data/`.
 
-```bash
-docker exec -it autohh python -m autohh --login
-```
+---
 
-Follow the browser prompts to log in. Session is saved automatically.
+## Основные возможности
 
-### 4. Control via Telegram
+* **Умное сопроводительное письмо**: Gemini генерирует естественный, краткий текст (2-3 предложения) на основе стека вакансии и содержимого вашего резюме.
+* **Фильтрация по грейдам**: Бот отсекает Senior-позиции и роли лидов, если в резюме указан опыт уровня Junior/Middle.
+* **Фильтрация несовпадающих ролей**: Бот автоматически пропускает вакансии преподавателей, менторов, технических писателей и менеджеров по продажам, если они выставляются по смежным ключевым словам.
+* **Автоматический пропуск опросников и тестов**: Если отклик на вакансию требует обязательного прохождения тестов или заполнения анкет (определяется по редиректу на страницу vacancy_response), бот отменит отклик и пришлет вам прямую ссылку в чат.
+* **Защита от блокировок**: Имитация поведения реального пользователя, ротация User-Agent, случайные скроллы и задержки, а также автоматическая остановка при появлении капчи.
 
-Send `/start` to your bot. Use the menu:
+---
 
-- **Start** - begin auto-applying
-- **Stop** - stop the process
-- **Status** - current state
-- **Settings** - configure everything
-- **Stats** - today's statistics
-- **History** - recent applications
-- **Login** - re-login to HH.ru
+## Конфигурация (.env)
 
-## Configuration
-
-All settings configurable via Telegram bot or `.env`:
-
-| Setting | Default | Description |
+| Параметр | По умолчанию | Описание |
 |---------|---------|-------------|
-| SEARCH_TEXT | Python Developer | Search query |
-| AREA_CODE | 113 | Region (113 = Russia) |
-| MAX_PAGES | 3 | Pages to process |
-| MAX_APPS_PER_DAY | 50 | Daily limit |
-| MAX_APPS_PER_HOUR | 10 | Hourly limit |
-| DELAY_MIN | 5 | Min delay between applies (sec) |
-| DELAY_MAX | 15 | Max delay between applies (sec) |
-| PROXY_URL | - | SOCKS5/HTTP proxy |
+| SEARCH_TEXT | Python Developer | Поисковый запрос вакансий |
+| AREA_CODE | 113 | Региональный код (113 - вся Россия, 1 - Москва) |
+| MAX_PAGES | 3 | Максимальное количество страниц поиска для обработки |
+| MAX_APPS_PER_DAY | 50 | Суточный лимит откликов |
+| MAX_APPS_PER_HOUR | 10 | Часовой лимит откликов |
+| DELAY_MIN | 5 | Минимальная задержка между действиями в секундах |
+| DELAY_MAX | 15 | Максимальная задержка между действиями в секундах |
+| LOG_LEVEL | INFO | Уровень логирования (DEBUG, INFO, WARNING, ERROR) |
 
-## Anti-Fraud
+---
 
-- Random delays between applies (5-15s by default)
-- Configurable daily/hourly limits
-- User-Agent rotation (8 realistic UAs)
-- Viewport size randomization
-- Random scroll behavior
-- Auto-pause on captcha detection
-- Pause after 3 consecutive errors
-
-## Project Structure
+## Структура кодовой базы
 
 ```
 autohh/
-├── config.py          # Settings from .env + DB overrides
-├── database.py        # SQLite: applied vacancies, settings, stats
-├── models.py          # Pydantic models
-├── anti_fraud.py      # Delays, limits, UA rotation
-├── scheduler.py       # Main automation loop
+├── config.py          # Загрузка и валидация настроек окружения
+├── database.py        # Инициализация SQLite, хранение истории откликов, настроек и кэша
+├── models/            # Pydantic-модели бизнес-сущностей
+├── scheduler.py       # Координация обхода, проверки лимитов и прерываний сессий
 ├── bot/
-│   ├── app.py         # Telegram bot setup
-│   ├── handlers.py    # Command handlers
-│   └── keyboards.py   # Inline keyboards
+│   ├── app.py         # Создание инстанса Telegram-бота и диспетчера
+│   ├── handlers/      # Сценарии диалогов и управления
+│   └── keyboards.py   # Клавиатуры управления ботом
 ├── services/
-│   ├── browser.py     # Playwright browser manager
-│   ├── hh_search.py   # Vacancy search
-│   ├── hh_apply.py    # Apply to vacancies
-│   ├── hh_auth.py     # HH.ru login
-│   └── gemini.py      # Gemini AI integration
-├── __main__.py        # Entry point
+│   ├── browser.py     # Жизненный цикл браузера Playwright
+│   ├── hh_search.py   # Парсинг вакансий с hh.ru
+│   ├── hh_apply.py    # Алгоритмы отклика на вакансии
+│   ├── hh_auth.py     # Логика входа и хранения cookie-сессий
+│   └── gemini.py      # Взаимодействие с API Gemini
+├── __main__.py        # Точка входа в приложение
 ├── Dockerfile
 └── docker-compose.yml
 ```
