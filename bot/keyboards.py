@@ -221,7 +221,7 @@ def settings_reply_keyboard(hh_linked: bool) -> ReplyKeyboardMarkup:
     hh_button = KeyboardButton(text="🔓 Logout HH") if hh_linked else KeyboardButton(text="🔑 Login HH")
     keyboard = [
         [KeyboardButton(text="🤖 Choose Gemini Model"), hh_button],
-        [KeyboardButton(text="🔔 Notifications"), KeyboardButton(text="🧹 Clear Cache")],
+        [KeyboardButton(text="🔔 Notifications"), KeyboardButton(text="🧹 Clear Cache"), KeyboardButton(text="🔄 Сбросить лимиты")],
         [KeyboardButton(text="⬅️ Back to Main Menu")]
     ]
     return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)

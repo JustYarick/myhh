@@ -156,7 +156,7 @@ class HHSearchService:
         items = vacancy_data[:max_count] if max_count > 0 else vacancy_data
         for data in items:
             await af.pre_action_delay()
-            description = await self._get_vacancy_description(page, data["url"])
+            description = await self.get_vacancy_description(page, data["url"])
             vacancies.append(Vacancy(
                 title=data["title"],
                 url=data["url"],
@@ -188,7 +188,29 @@ class HHSearchService:
             return False
 
     async def get_vacancy_description(self, page: Page, url: str) -> str:
-        return await self._get_vacancy_description(page, url)
+        from .. import database as db
+        try:
+            cached = await db.get_cached_vacancy_description(url)
+            if cached:
+                logger.info(f"Using cached description for: {url}")
+                return cached
+        except Exception as e:
+            logger.debug(f"Failed to read description cache: {e}")
+
+        context = page.context
+        temp_page = await context.new_page()
+        try:
+            temp_page.set_default_timeout(
+                page._timeout_settings._default_timeout
+                if hasattr(page, "_timeout_settings")
+                else 30000
+            )
+            return await self._get_vacancy_description(temp_page, url)
+        finally:
+            try:
+                await temp_page.close()
+            except Exception:
+                pass
 
     async def close_page(self, page: Page) -> None:
         try:

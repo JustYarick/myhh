@@ -307,7 +307,7 @@ async def get_hourly_applications_count() -> int:
         cursor = await db.execute(
             """SELECT COUNT(*) FROM applied_vacancies
                WHERE created_at >= datetime(?, '-1 hour')
-               AND status IN ('success', 'analyzed_skip')""",
+               AND status = 'success'""",
             (one_hour_ago,),
         )
         row = await cursor.fetchone()
@@ -361,3 +361,12 @@ async def get_all_settings() -> dict[str, str]:
         cursor = await db.execute("SELECT key, value FROM bot_settings")
         rows = await cursor.fetchall()
         return {row[0]: row[1] for row in rows}
+
+
+async def reset_today_limits() -> None:
+    today = date.today().isoformat()
+    db_path = _get_db_path()
+    async with aiosqlite.connect(str(db_path)) as db:
+        await db.execute("DELETE FROM daily_stats WHERE date = ?", (today,))
+        await db.execute("DELETE FROM applied_vacancies WHERE created_at >= date('now', 'start of day')")
+        await db.commit()

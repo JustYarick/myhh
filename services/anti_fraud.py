@@ -48,8 +48,8 @@ class AntiFraud:
         config = self._config
 
         today_stats = await db.get_today_stats()
-        if today_stats["total_applied"] >= config.max_apps_per_day:
-            msg = f"Daily limit reached: {today_stats['total_applied']}/{config.max_apps_per_day}"
+        if today_stats["successful"] >= config.max_apps_per_day:
+            msg = f"Daily limit reached: {today_stats['successful']}/{config.max_apps_per_day}"
             logger.warning(msg)
             return False, msg
 

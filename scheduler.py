@@ -383,12 +383,12 @@ class Scheduler:
         if is_test_skip:
             await self._notify(
                 f"⏭ <b>Пропущено (Требуется тест / Ловушка):</b> <a href=\"{vacancy.url}\">{vacancy.title}</a> @ {vacancy.employer}\n"
-                f"<i>{analysis_result.summary}</i>",
+                f"<blockquote>{analysis_result.summary}</blockquote>",
                 notify_type="info"
             )
         else:
             await self._notify(
-                f"⏭ <b>Skipped</b> (Relevance={analysis_result.relevance}/10): <a href=\"{vacancy.url}\">{vacancy.title}</a> @ {vacancy.employer}\n"
+                f"⏭ <b>Пропущено</b> (Релевантность={analysis_result.relevance}/10): <a href=\"{vacancy.url}\">{vacancy.title}</a> @ {vacancy.employer}\n"
                 f"<i>{analysis_result.summary}</i>",
                 notify_type="skip"
             )
@@ -634,6 +634,13 @@ class Scheduler:
                     await context.close()
                 except Exception:
                     pass
+            # Stop the browser to free memory and prevent leaks
+            try:
+                await browser_manager.stop()
+                logger.info("Browser stopped at the end of scheduler run to free memory")
+            except Exception as e:
+                logger.error(f"Failed to stop browser: {e}")
+
             self._run_state = RunState.IDLE
             self.state = BotState()
             stats = await db.get_today_stats()

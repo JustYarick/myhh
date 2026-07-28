@@ -212,3 +212,16 @@ async def toggle_notification_callback(callback: CallbackQuery) -> None:
         reply_markup=notifications_keyboard(success, error, skip)
     )
 
+
+@settings_router.message(F.text == "🔄 Сбросить лимиты")
+async def reset_limits_message(message: Message) -> None:
+    if not await _check_access(message.from_user.id):
+        return
+    try:
+        from ...database import reset_today_limits
+        await reset_today_limits()
+        await message.answer("🔄 <b>Лимиты на сегодня успешно сброшены!</b>", parse_mode="HTML")
+    except Exception as e:
+        logger.error(f"Failed to reset limits: {e}")
+        await message.answer(f"❌ Не удалось сбросить лимиты: {e}")
+
