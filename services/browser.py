@@ -36,10 +36,36 @@ class BrowserManager:
                 self._browser = await self._playwright.chromium.launch(**launch_args)
                 logger.info("Browser launched")
 
-    async def _ensure_browser(self):
-        if not self._browser:
-            await self.start()
-        return self._browser
+    async def _ensure_browser(self) -> Browser:
+        async with self._lock:
+            if self._browser is None or not self._browser.is_connected():
+                if self._browser:
+                    try:
+                        await self._browser.close()
+                    except Exception:
+                        pass
+                    self._browser = None
+                if self._playwright:
+                    try:
+                        await self._playwright.stop()
+                    except Exception:
+                        pass
+                    self._playwright = None
+
+                logger.info("Starting Playwright/Browser (reconnecting)...")
+                self._playwright = await async_playwright().start()
+
+                launch_args = {
+                    "headless": self._settings.browser_headless,
+                    "slow_mo": self._settings.browser_slow_mo,
+                }
+
+                if self._settings.proxy_url:
+                    launch_args["proxy"] = {"server": self._settings.proxy_url}
+
+                self._browser = await self._playwright.chromium.launch(**launch_args)
+                logger.info("Browser launched and connected")
+            return self._browser
 
     async def stop(self) -> None:
         async with self._lock:
@@ -60,8 +86,7 @@ class BrowserManager:
 
     @asynccontextmanager
     async def get_page(self, use_session: bool = True) -> AsyncGenerator[Page, None]:
-        if not self._browser:
-            await self.start()
+        browser = await self._ensure_browser()
 
         context: Optional[BrowserContext] = None
         try:
@@ -80,7 +105,7 @@ class BrowserManager:
             if self._settings.proxy_url:
                 ctx_args["proxy"] = {"server": self._settings.proxy_url}
 
-            context = await self._browser.new_context(**ctx_args)
+            context = await browser.new_context(**ctx_args)
             page = await context.new_page()
             page.set_default_timeout(self._settings.page_timeout)
 
@@ -91,8 +116,7 @@ class BrowserManager:
                 await context.close()
 
     async def create_run_context(self) -> tuple[BrowserContext, Page]:
-        if not self._browser:
-            await self.start()
+        browser = await self._ensure_browser()
 
         ctx_args = {
             "viewport": get_random_viewport(),
@@ -105,7 +129,7 @@ class BrowserManager:
         if self._settings.proxy_url:
             ctx_args["proxy"] = {"server": self._settings.proxy_url}
 
-        context = await self._browser.new_context(**ctx_args)
+        context = await browser.new_context(**ctx_args)
         page = await context.new_page()
         page.set_default_timeout(self._settings.page_timeout)
         return context, page
