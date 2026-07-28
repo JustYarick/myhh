@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     page_timeout: int = Field(default=30000, alias="PAGE_TIMEOUT")
     proxy_url: Optional[str] = Field(default=None, alias="PROXY_URL")
 
+    log_level: str = Field(default="INFO", alias="LOG_LEVEL")
     data_dir: Path = Field(default=Path("./data"), alias="DATA_DIR")
 
     @property

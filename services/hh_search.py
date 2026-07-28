@@ -9,55 +9,67 @@ from playwright.async_api import Page
 from ..models import Vacancy
 from .browser import browser_manager
 from .anti_fraud import AntiFraud, get_random_viewport, get_random_user_agent
+from .playwright_utils import check_bot_protection
 
 logger = logging.getLogger(__name__)
 
 
 class HHSearchService:
-    async def _check_bot_protection(self, page: Page) -> bool:
-        try:
-            title = (await page.title()).lower()
-            if "captcha" in title or "smartcaptcha" in title or "подтвердите" in title:
-                logger.warning(f"Captcha detected by title: {title}")
-                return True
-
-            for sel in [
-                "[data-qa*='captcha']",
-                "iframe[src*='captcha']",
-                "iframe[src*='smartcaptcha']",
-                ".SmartCaptcha",
-                "#captcha",
-                "[class*='captcha']",
-                "div[data-testid='captcha']",
-            ]:
-                if await page.locator(sel).count() > 0:
-                    logger.warning(f"Captcha detected by selector: {sel}")
-                    return True
-
-            body_text = await page.evaluate(
-                "() => { const b = document.body; return b ? b.innerText.substring(0, 2000) : ''; }"
-            )
-            body_lower = body_text.lower()
-            if "подтвердите, что вы не робот" in body_lower or "smartcaptcha" in body_lower:
-                logger.warning("Captcha detected by body text")
-                return True
-
-            return False
-        except Exception as e:
-            logger.debug(f"Captcha check error: {e}")
-            return False
 
     async def _get_vacancy_description(self, page: Page, url: str) -> str:
+        from .. import database as db
         try:
-            logger.debug(f"Fetching description: {url}")
+            cached = await db.get_cached_vacancy_description(url)
+            if cached:
+                logger.info(f"Using cached description for: {url}")
+                return cached
+        except Exception as e:
+            logger.debug(f"Failed to read description cache: {e}")
+
+        try:
+            logger.debug(f"Fetching description from web: {url}")
             await page.goto(url, wait_until="domcontentloaded", timeout=15000)
             await page.wait_for_selector("[data-qa='vacancy-description']", timeout=10000)
 
+            # Get structured experience & salary fields from the page header
+            exp_text = ""
+            exp_el = page.locator("[data-qa='vacancy-experience']")
+            if await exp_el.count() > 0:
+                exp_text = (await exp_el.inner_text()).strip()
+
+            salary_text = ""
+            salary_el = page.locator("[data-qa='vacancy-salary']")
+            if await salary_el.count() > 0:
+                salary_text = (await salary_el.inner_text()).strip()
+
             description_el = page.locator("[data-qa='vacancy-description']")
             if await description_el.count() > 0:
-                text = (await description_el.inner_text()).strip()
+                body_text = (await description_el.inner_text()).strip()
+                
+                # Combine structured headers with main description body
+                header_parts = []
+                if exp_text:
+                    header_parts.append(f"Требуемый опыт работы: {exp_text}")
+                if salary_text:
+                    header_parts.append(f"Зарплата: {salary_text}")
+                
+                if header_parts:
+                    text = "ТРЕБОВАНИЯ ВАКАНСИИ:\n" + "\n".join(header_parts) + "\n\nОПИСАНИЕ:\n" + body_text
+                else:
+                    text = body_text
+
                 logger.debug(f"Description length: {len(text)} chars")
                 logger.debug(f"[VACANCY FULL DESC]\n{'='*60}\n{text}\n{'='*60}")
+                
+                # Save to cache
+                try:
+                    title_el = page.locator("[data-qa='vacancy-title']")
+                    title = await title_el.inner_text() if await title_el.count() > 0 else "Unknown"
+                    employer_el = page.locator("[data-qa='vacancy-company-name']").first
+                    employer = await employer_el.inner_text() if await employer_el.count() > 0 else "Unknown"
+                    await db.save_vacancy_description_to_cache(url, title, employer, text)
+                except Exception as cache_err:
+                    logger.warning(f"Failed to cache fetched description: {cache_err}")
                 return text
             return ""
         except Exception as e:
@@ -159,7 +171,7 @@ class HHSearchService:
         await af.random_delay()
         await page.goto(url, wait_until="domcontentloaded", timeout=45000)
 
-        if await self._check_bot_protection(page):
+        if await check_bot_protection(page):
             af.captcha_detected()
             raise RuntimeError("Bot protection triggered (captcha)")
 

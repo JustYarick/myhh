@@ -1,6 +1,6 @@
 import logging
 from aiogram import Router, F
-from aiogram.types import CallbackQuery
+from aiogram.types import CallbackQuery, Message
 
 from ...services.hh_auth import hh_auth
 
@@ -38,7 +38,13 @@ async def settings_callback(callback: CallbackQuery) -> None:
 async def settings_model_callback(callback: CallbackQuery) -> None:
     if not await _check_access(callback.from_user.id):
         return
-    await callback.answer("Loading models...")
+    await callback.answer()
+    
+    await callback.message.edit_text(
+        "⚙️ <b>Global Settings</b>\n\n⏳ <i>Fetching available Gemini models...</i>",
+        parse_mode="HTML"
+    )
+    
     from ...services.gemini import list_models
     from ...config import get_settings
     from ...services.flow_entity import get_setting
@@ -46,7 +52,10 @@ async def settings_model_callback(callback: CallbackQuery) -> None:
     gemini_model = await get_setting("gemini_model", "gemini-2.0-flash")
     models = list_models(settings.gemini_api_key)
     if not models:
-        await callback.answer("Failed to fetch models. Check API key.", show_alert=True)
+        await callback.message.edit_text(
+            "<b>Global Settings</b>\n\n❌ Failed to fetch models. Check Gemini API key.",
+            parse_mode="HTML"
+        )
         return
     from ..keyboards import model_list_keyboard
     await callback.message.edit_text(
@@ -93,3 +102,113 @@ async def settings_hh_callback(callback: CallbackQuery) -> None:
         parse_mode="HTML",
         reply_markup=back_keyboard("settings"),
     )
+
+
+@settings_router.message(F.text == "⬅️ Back to Settings")
+async def back_to_settings_message(message: Message) -> None:
+    if not await _check_access(message.from_user.id):
+        return
+    from ...services.flow_entity import get_setting
+    from ..keyboards import settings_reply_keyboard
+    gemini_model = await get_setting("gemini_model", "gemini-2.0-flash")
+    hh_ok = hh_auth.session_exists()
+    hh_status = "Linked" if hh_ok else "Not linked"
+    text = (
+        f"⚙️ <b>Global Settings</b>\n\n"
+        f"🤖 Gemini model: <code>{gemini_model}</code>\n"
+        f"🔑 HH Account: <b>{hh_status}</b>"
+    )
+    await message.answer(
+        text,
+        parse_mode="HTML",
+        reply_markup=settings_reply_keyboard(hh_ok),
+    )
+
+
+@settings_router.message(F.text == "🤖 Choose Gemini Model")
+async def settings_choose_model_message(message: Message) -> None:
+    if not await _check_access(message.from_user.id):
+        return
+    from ...services.gemini import list_models
+    from ...config import get_settings
+    from ...services.flow_entity import get_setting
+    from ..keyboards import models_reply_keyboard
+    settings = get_settings()
+    gemini_model = await get_setting("gemini_model", "gemini-2.0-flash")
+    models = list_models(settings.gemini_api_key)
+    if not models:
+        await message.answer("Failed to fetch models. Check API key.")
+        return
+    await message.answer(
+        "<b>Select Gemini Model</b>\n⭐ = current",
+        parse_mode="HTML",
+        reply_markup=models_reply_keyboard(models, gemini_model),
+    )
+
+
+@settings_router.message(F.text.startswith("Model: "))
+async def settings_set_model_message(message: Message) -> None:
+    if not await _check_access(message.from_user.id):
+        return
+    model = message.text.replace("Model: ", "").replace("⭐ ", "").strip()
+    from ...services.flow_entity import set_setting
+    from ...services.gemini import gemini_service
+    await set_setting("gemini_model", model)
+    gemini_service.set_model(model)
+    await message.answer(f"✅ Gemini model updated to: <b>{model}</b>", parse_mode="HTML")
+    await back_to_settings_message(message)
+
+
+@settings_router.message(F.text == "🧹 Clear Cache")
+async def clear_cache_message(message: Message) -> None:
+    if not await _check_access(message.from_user.id):
+        return
+    from ... import database as db
+    try:
+        await db.clear_vacancy_cache()
+        await message.answer("🧹 <b>Vacancy cache cleared successfully!</b>", parse_mode="HTML")
+    except Exception as e:
+        logger.error(f"Failed to clear cache: {e}")
+        await message.answer(f"❌ Failed to clear cache: {e}")
+    await back_to_settings_message(message)
+
+
+@settings_router.message(F.text == "🔔 Notifications")
+async def notifications_settings_message(message: Message) -> None:
+    if not await _check_access(message.from_user.id):
+        return
+    from ...services.flow_entity import get_setting
+    from ..keyboards import notifications_keyboard
+    
+    success = (await get_setting("notify_success", "true")) == "true"
+    error = (await get_setting("notify_error", "true")) == "true"
+    skip = (await get_setting("notify_skip", "false")) == "true"
+    
+    await message.answer(
+        "🔔 <b>Notification Settings</b>\n\nConfigure which events trigger Telegram notifications:",
+        parse_mode="HTML",
+        reply_markup=notifications_keyboard(success, error, skip)
+    )
+
+
+@settings_router.callback_query(F.data.startswith("toggle_notify_"))
+async def toggle_notification_callback(callback: CallbackQuery) -> None:
+    if not await _check_access(callback.from_user.id):
+        return
+    key = callback.data.replace("toggle_", "")
+    from ...services.flow_entity import get_setting, set_setting
+    from ..keyboards import notifications_keyboard
+    
+    current = (await get_setting(key, "true" if key != "notify_skip" else "false")) == "true"
+    new_val = "false" if current else "true"
+    await set_setting(key, new_val)
+    
+    success = (await get_setting("notify_success", "true")) == "true"
+    error = (await get_setting("notify_error", "true")) == "true"
+    skip = (await get_setting("notify_skip", "false")) == "true"
+    
+    await callback.answer(f"{key.replace('notify_', '').capitalize()} toggled {'ON' if new_val == 'true' else 'OFF'}")
+    await callback.message.edit_reply_markup(
+        reply_markup=notifications_keyboard(success, error, skip)
+    )
+

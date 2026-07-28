@@ -6,6 +6,7 @@ import aiosqlite
 
 from ..config import get_settings
 from ..models.flow import FlowConfig, FlowEntity
+from ..database import get_setting, set_setting, get_all_settings
 
 logger = logging.getLogger(__name__)
 
@@ -20,25 +21,10 @@ def _get_db_path() -> str:
 
 
 async def init_flow_table() -> None:
-    async with aiosqlite.connect(_get_db_path()) as db:
-        await db.execute("""
-            CREATE TABLE IF NOT EXISTS flow_entities (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL,
-                config TEXT NOT NULL DEFAULT '{}',
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-        await db.execute("""
-            CREATE TABLE IF NOT EXISTS bot_settings (
-                key TEXT PRIMARY KEY,
-                value TEXT NOT NULL,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-        await db.commit()
-    logger.info("Flow tables initialized")
+    try:
+        await migrate_existing_flows_prompts()
+    except Exception as e:
+        logger.warning(f"Failed to migrate flow prompts: {e}")
 
 
 async def create_flow(name: str, config: FlowConfig) -> FlowEntity:
@@ -149,30 +135,20 @@ async def get_active_flow() -> Optional[FlowEntity]:
     return await get_flow(flow_id)
 
 
-async def set_setting(key: str, value: str) -> None:
-    async with aiosqlite.connect(_get_db_path()) as db:
-        await db.execute(
-            """INSERT INTO bot_settings (key, value, updated_at)
-               VALUES (?, ?, CURRENT_TIMESTAMP)
-               ON CONFLICT(key) DO UPDATE SET
-                   value = excluded.value,
-                   updated_at = CURRENT_TIMESTAMP""",
-            (key, value),
-        )
-        await db.commit()
+# Settings helpers are imported from database module for backwards compatibility
 
 
-async def get_setting(key: str, default: str = "") -> str:
-    async with aiosqlite.connect(_get_db_path()) as db:
-        cursor = await db.execute(
-            "SELECT value FROM bot_settings WHERE key = ?", (key,)
-        )
-        row = await cursor.fetchone()
-        return row[0] if row else default
-
-
-async def get_all_settings() -> dict[str, str]:
-    async with aiosqlite.connect(_get_db_path()) as db:
-        cursor = await db.execute("SELECT key, value FROM bot_settings")
-        rows = await cursor.fetchall()
-        return {row[0]: row[1] for row in rows}
+async def migrate_existing_flows_prompts() -> None:
+    flows = await list_flows()
+    for flow in flows:
+        updated = False
+        if "Generate a short cover letter" in flow.config.cover_letter_prompt or "professional but casual, Russian" in flow.config.cover_letter_prompt:
+            flow.config.cover_letter_prompt = FlowConfig().cover_letter_prompt
+            updated = True
+        if "Rate relevance of vacancy" in flow.config.analysis_prompt:
+            flow.config.analysis_prompt = FlowConfig().analysis_prompt
+            updated = True
+        
+        if updated:
+            await update_flow(flow.id, config=flow.config)
+            logger.info(f"Migrated default prompts to Russian for flow ID={flow.id} ({flow.name})")

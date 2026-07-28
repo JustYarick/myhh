@@ -55,12 +55,24 @@ async def init_db() -> None:
                 vacancy_url TEXT PRIMARY KEY,
                 title TEXT DEFAULT '',
                 employer TEXT DEFAULT '',
+                description TEXT DEFAULT '',
                 ai_relevance INTEGER DEFAULT 0,
                 ai_summary TEXT DEFAULT '',
                 result TEXT NOT NULL,
                 processed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
+        
+        # Check if description column exists in vacancy_cache, if not, add it
+        try:
+            async with db.execute("PRAGMA table_info(vacancy_cache)") as cursor:
+                columns = [row[1] for row in await cursor.fetchall()]
+                if "description" not in columns:
+                    await db.execute("ALTER TABLE vacancy_cache ADD COLUMN description TEXT DEFAULT ''")
+                    logger.info("Database migration: added description column to vacancy_cache")
+        except Exception as e:
+            logger.warning(f"Failed to perform database migration: {e}")
+
         await db.execute(
             "CREATE INDEX IF NOT EXISTS idx_cache_processed ON vacancy_cache(processed_at)"
         )
@@ -71,6 +83,23 @@ async def init_db() -> None:
         await db.execute(
             "CREATE INDEX IF NOT EXISTS idx_vacancy_created ON applied_vacancies(created_at)"
         )
+
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS flow_entities (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                config TEXT NOT NULL DEFAULT '{}',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS bot_settings (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
 
         await db.commit()
     logger.info(f"Database initialized: {db_path}")
@@ -120,11 +149,56 @@ async def cache_vacancy_result(
     db_path = _get_db_path()
     async with aiosqlite.connect(str(db_path)) as db:
         await db.execute(
-            """INSERT OR REPLACE INTO vacancy_cache
+            """INSERT INTO vacancy_cache
                (vacancy_url, title, employer, ai_relevance, ai_summary, result, processed_at)
-               VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)""",
+               VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+               ON CONFLICT(vacancy_url) DO UPDATE SET
+                   title = excluded.title,
+                   employer = excluded.employer,
+                   ai_relevance = excluded.ai_relevance,
+                   ai_summary = excluded.ai_summary,
+                   result = excluded.result,
+                   processed_at = CURRENT_TIMESTAMP""",
             (vacancy_url, title, employer, ai_relevance, ai_summary, result),
         )
+        await db.commit()
+
+
+async def get_cached_vacancy_description(vacancy_url: str) -> Optional[str]:
+    db_path = _get_db_path()
+    async with aiosqlite.connect(str(db_path)) as db:
+        cursor = await db.execute(
+            "SELECT description FROM vacancy_cache WHERE vacancy_url = ? LIMIT 1",
+            (vacancy_url,)
+        )
+        row = await cursor.fetchone()
+        return row[0] if row and row[0] else None
+
+
+async def save_vacancy_description_to_cache(
+    vacancy_url: str,
+    title: str,
+    employer: str,
+    description: str,
+) -> None:
+    db_path = _get_db_path()
+    async with aiosqlite.connect(str(db_path)) as db:
+        await db.execute(
+            """INSERT INTO vacancy_cache (vacancy_url, title, employer, description, result)
+               VALUES (?, ?, ?, ?, 'parsed')
+               ON CONFLICT(vacancy_url) DO UPDATE SET
+                   title = excluded.title,
+                   employer = excluded.employer,
+                   description = excluded.description""",
+            (vacancy_url, title, employer, description),
+        )
+        await db.commit()
+
+
+async def clear_vacancy_cache() -> None:
+    db_path = _get_db_path()
+    async with aiosqlite.connect(str(db_path)) as db:
+        await db.execute("DELETE FROM vacancy_cache")
         await db.commit()
 
 
@@ -255,3 +329,35 @@ async def get_consecutive_errors() -> int:
             else:
                 break
         return count
+
+
+async def set_setting(key: str, value: str) -> None:
+    db_path = _get_db_path()
+    async with aiosqlite.connect(str(db_path)) as db:
+        await db.execute(
+            """INSERT INTO bot_settings (key, value, updated_at)
+               VALUES (?, ?, CURRENT_TIMESTAMP)
+               ON CONFLICT(key) DO UPDATE SET
+                   value = excluded.value,
+                   updated_at = CURRENT_TIMESTAMP""",
+            (key, value),
+        )
+        await db.commit()
+
+
+async def get_setting(key: str, default: str = "") -> str:
+    db_path = _get_db_path()
+    async with aiosqlite.connect(str(db_path)) as db:
+        cursor = await db.execute(
+            "SELECT value FROM bot_settings WHERE key = ?", (key,)
+        )
+        row = await cursor.fetchone()
+        return row[0] if row else default
+
+
+async def get_all_settings() -> dict[str, str]:
+    db_path = _get_db_path()
+    async with aiosqlite.connect(str(db_path)) as db:
+        cursor = await db.execute("SELECT key, value FROM bot_settings")
+        rows = await cursor.fetchall()
+        return {row[0]: row[1] for row in rows}

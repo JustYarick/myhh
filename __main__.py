@@ -2,23 +2,41 @@ import asyncio
 import logging
 import sys
 from typing import Optional, Callable, Awaitable
+from loguru import logger
 
 from .config import get_settings
-from .database import init_db
+from .database import init_db, get_setting
 from .services.browser import browser_manager
 from .services.flow_entity import init_flow_table
 
+# Intercept standard library logging and pass to loguru
+class InterceptHandler(logging.Handler):
+    def emit(self, record):
+        try:
+            level = logger.level(record.levelname).name
+        except ValueError:
+            level = record.levelno
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
+        frame, depth = sys._getframe(6), 6
+        while frame and frame.f_code.co_filename == logging.__file__:
+            frame = frame.f_back
+            depth += 1
+
+        logger.opt(depth=depth, exception=record.exc_info).log(level, record.getMessage())
+
+# Configure standard logging to redirect to loguru InterceptHandler
+settings = get_settings()
+log_level = settings.log_level.upper()
+std_level = getattr(logging, log_level, logging.INFO)
+logging.basicConfig(handlers=[InterceptHandler()], level=std_level)
+
+# Configure loguru
+logger.remove()
+logger.add(
+    sys.stderr,
+    level=log_level,
+    format="<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - <level>{message}</level>"
 )
-logging.getLogger("autohh").setLevel(logging.DEBUG)
-logging.getLogger("aiohttp").setLevel(logging.WARNING)
-logging.getLogger("aiogram").setLevel(logging.INFO)
-logging.getLogger("playwright").setLevel(logging.WARNING)
-logger = logging.getLogger("autohh")
 
 _error_callback: Optional[Callable[[str], Awaitable[None]]] = None
 _bot_instance = None
@@ -54,7 +72,6 @@ async def _on_startup(bot) -> None:
     await browser_manager.start()
 
     from .services.gemini import gemini_service
-    from .services.flow_entity import get_setting
     saved_model = await get_setting("gemini_model", "")
     if saved_model:
         gemini_service.set_model(saved_model)

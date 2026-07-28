@@ -28,6 +28,7 @@ class VacancyAnalysis(BaseModel):
     salary_match: bool = False
     summary: str = ""
     apply: bool = False
+    requires_test: bool = False
 
     @field_validator("relevance", mode="before")
     @classmethod
@@ -39,7 +40,7 @@ class VacancyAnalysis(BaseModel):
         except (ValueError, TypeError):
             return 0
 
-    @field_validator("salary_match", "apply", mode="before")
+    @field_validator("salary_match", "apply", "requires_test", mode="before")
     @classmethod
     def coerce_bool(cls, v):
         if v is None:

@@ -42,6 +42,8 @@ class ResumeData:
                 lines.append(
                     f"  {exp.get('period', '')} — {exp.get('position', '')} @ {exp.get('company', '')}"
                 )
+        else:
+            lines.append("Опыт работы: отсутствует (0 лет)")
 
         if self.education:
             lines.append("Образование:")

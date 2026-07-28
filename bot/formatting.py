@@ -65,3 +65,51 @@ def relevance_color(score: int) -> str:
         return "🟡"
     else:
         return "🔴"
+
+
+def format_apply_success(
+    title: str,
+    url: str,
+    employer: str,
+    relevance: Optional[int] = None,
+    summary: Optional[str] = None,
+    cover_letter: Optional[str] = None,
+) -> str:
+    relevance_str = f" | {relevance}/10" if relevance is not None else ""
+    summary_str = f"\n💬 <b>Анализ:</b> {summary}" if summary else ""
+    cover_preview = f"\n\n📝 <b>Сопроводительное письмо:</b>\n{cover_letter}" if cover_letter else "\n📝 <b>Сопроводительное:</b> —"
+    return (
+        f"✅ <b>Успешный отклик!</b>\n"
+        f"🔗 <b>Вакансия:</b> {link(title, url)}\n"
+        f"🏢 <b>Компания:</b> {employer}{relevance_str}"
+        f"{summary_str}"
+        f"{cover_preview}"
+    )
+
+
+def format_session_finished(total: int, successful: int, errors: int) -> str:
+    return (
+        f"📊 <b>Сессия авто-откликов завершена</b>\n"
+        f"📋 Обработано сегодня: <b>{total}</b>\n"
+        f"🟢 Успешных откликов: <b>{successful}</b>\n"
+        f"🔴 Ошибок: <b>{errors}</b>"
+    )
+
+
+def format_scheduler_status(
+    run_state_name: str,
+    page: int,
+    processed: int,
+    applied_today: int,
+    captcha_detected: bool,
+) -> str:
+    captcha_str = "⚠️ Обнаружена" if captcha_detected else "✅ Отсутствует"
+    return (
+        f"ℹ️ <b>Статус авто-откликщика:</b>\n"
+        f"👤 <b>Режим:</b> {run_state_name}\n"
+        f"📄 <b>Текущая страница:</b> {page}\n"
+        f"📋 <b>Обработано вакансий:</b> {processed}\n"
+        f"✅ <b>Откликов сегодня:</b> {applied_today}\n"
+        f"🔒 <b>Капча:</b> {captcha_str}"
+    )
+

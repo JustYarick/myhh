@@ -62,67 +62,100 @@ async def flow_test_callback(callback: CallbackQuery) -> None:
     from ...services.anti_fraud import AntiFraud
     from ..formatting import bold, italic, code, quote, divider, relevance_bar, relevance_color
 
-    await callback.message.edit_text("⏳ Running test...")
+    await callback.message.edit_text(
+        f"<b>Flow: {flow.name}</b>\n\n⏳ <i>Running test... Fetching vacancies from HH.ru...</i>",
+        parse_mode="HTML"
+    )
 
     af = AntiFraud(flow.config)
-    parts = []
+    vacancies = []
+    page_title = "Unknown"
+    count = 0
 
     try:
         if flow.config.search_url:
-            url = flow.config.search_url
             count, page_title, vacancies = await search_service.search_with_info(
-                url, af, max_descriptions=3
+                flow.config.search_url, af, max_descriptions=3
             )
-            parts.append(f"{bold('🔍 Test Run')}: {bold(flow.name)}")
-            parts.append(divider())
-            parts.append(f"{bold('Page')}: {italic(page_title)}")
-            parts.append(f"{bold('Found')}: {code(str(count))} vacancies")
-            parts.append("")
         else:
-            await callback.answer("Set search URL first", show_alert=True)
+            await callback.message.edit_text(
+                f"<b>Flow: {flow.name}</b>\n\n❌ Set search URL first in flow settings.",
+                parse_mode="HTML"
+            )
             return
 
-        from ...services.flow_entity import get_setting, set_setting
         resume_text = flow.config.resume_text
-
         if not resume_text and flow.config.resume_id:
-            await callback.answer("Loading resume...", show_alert=False)
+            await callback.message.edit_text(
+                f"<b>Flow: {flow.name}</b>\n\n⏳ <i>Fetching resume text from HH.ru...</i>",
+                parse_mode="HTML"
+            )
             resume_text = await hh_auth.get_resume_text(flow.config.resume_id)
             if resume_text:
                 flow.config.resume_text = resume_text
                 await flow_db.update_flow(flow_id, config=flow.config)
 
         if not vacancies:
-            parts.append(f"{italic('No vacancies found.')}")
+            await callback.message.edit_text(
+                f"<b>Flow: {flow.name}</b>\n\n🔍 <b>Test Run</b>\nFound: {code(str(count))} vacancies.\n\n⚠️ <i>No vacancies found to analyze.</i>",
+                parse_mode="HTML"
+            )
         else:
-            parts.append(f"{bold(f'📋 {len(vacancies)} Vacancies')}")
-            parts.append("")
+            # Send initial test header
+            header_msg = (
+                f"🔍 {bold('Test Run')}: {bold(flow.name)}\n"
+                f"{divider()}\n"
+                f"{bold('Page')}: {italic(page_title)}\n"
+                f"{bold('Found')}: {code(str(count))} vacancies.\n\n"
+                f"⏳ <i>Analyzing first {len(vacancies)} vacancies...</i>"
+            )
+            await callback.message.answer(header_msg, parse_mode="HTML")
 
             for i, v in enumerate(vacancies, 1):
-                parts.append(f"{bold(f'{i}. {v.title}')}")
-                parts.append(f"   {italic(v.employer)}")
+                # Update status in the main loading message
+                await callback.message.edit_text(
+                    f"<b>Flow: {flow.name}</b>\n\n⏳ <i>Analyzing vacancy {i}/{len(vacancies)}...</i>",
+                    parse_mode="HTML"
+                )
+
+                vacancy_parts = []
+                vacancy_parts.append(f"📋 {bold(f'Vacancy {i}/{len(vacancies)}')}")
+                vacancy_parts.append(divider())
+                vacancy_parts.append(f"{bold('Title')}: <a href=\"{v.url}\">{v.title}</a>")
+                vacancy_parts.append(f"{bold('Employer')}: {italic(v.employer)}")
                 if v.description:
+                    # Prepend a small snippet of the description
                     desc_short = v.description[:120].replace("\n", " ")
-                    parts.append(f"   {quote(desc_short + '...')}")
-                parts.append("")
+                    vacancy_parts.append(f"   {quote(desc_short + '...')}")
+                vacancy_parts.append("")
 
                 analysis = None
                 try:
-                    analysis = await gemini_service.analyze_vacancy(
-                        v.model_dump(),
-                        prompt_template=flow.config.analysis_prompt,
-                        resume_text=resume_text,
-                    )
+                    from ... import database as db
+                    cached_res = await db.get_cached_vacancy_result(v.url)
+                    if cached_res and cached_res.get("ai_relevance") is not None and cached_res.get("result") != "parsed":
+                        from ...models import VacancyAnalysis
+                        analysis = VacancyAnalysis(
+                            relevance=cached_res["ai_relevance"],
+                            salary_match=False,
+                            summary=cached_res["ai_summary"] or "",
+                            apply=(cached_res["result"] != "analyzed_skip"),
+                        )
+                    else:
+                        analysis = await gemini_service.analyze_vacancy(
+                            v.model_dump(),
+                            prompt_template=flow.config.analysis_prompt,
+                            resume_text=resume_text,
+                        )
                     color = relevance_color(analysis.relevance)
-                    parts.append(f"   {bold('AI Analysis')}: {color} {bold(f'{analysis.relevance}/10')} {relevance_bar(analysis.relevance)}")
-                    summary_short = analysis.summary[:80]
-                    if summary_short:
-                        parts.append(f"   {italic(summary_short)}")
+                    vacancy_parts.append(f"🤖 {bold('AI Analysis')}: {color} {bold(f'{analysis.relevance}/10')} {relevance_bar(analysis.relevance)}")
+                    if analysis.summary:
+                        vacancy_parts.append(f"   {italic(analysis.summary)}")
                     should_apply = analysis.relevance >= 4
-                    apply_text = f"{bold('✅ APPLY')}" if should_apply else f"{bold('⏭ SKIP')}"
-                    parts.append(f"   {apply_text}")
+                    apply_text = f"   {bold('✅ WOULD APPLY')}" if should_apply else f"   {bold('⏭ WOULD SKIP')}"
+                    vacancy_parts.append(apply_text)
                 except Exception as e:
-                    parts.append(f"   ❌ AI Error: {code(str(e)[:100])}")
+                    vacancy_parts.append(f"🤖 ❌ AI Error: {code(str(e)[:100])}")
 
                 try:
                     cover = await gemini_service.generate_cover_letter(
@@ -131,31 +164,30 @@ async def flow_test_callback(callback: CallbackQuery) -> None:
                         resume_text=resume_text,
                     )
                     if cover:
-                        parts.append(f"\n   {bold('📝 Cover Letter')}:")
-                        parts.append(f"   {quote(cover[:400])}")
+                        vacancy_parts.append(f"\n📝 {bold('Cover Letter')}:")
+                        vacancy_parts.append(quote(cover))
                 except Exception as e:
-                    parts.append(f"   ❌ Cover Error: {code(str(e)[:100])}")
+                    vacancy_parts.append(f"\n📝 ❌ Cover Error: {code(str(e)[:100])}")
 
-                parts.append("")
-                parts.append(divider())
-                parts.append("")
+                # Send this vacancy test message separately
+                await callback.message.answer("\n".join(vacancy_parts), parse_mode="HTML")
+
+            # Finalize main message
+            from ..keyboards import flow_detail_keyboard
+            await callback.message.edit_text(
+                f"✅ <b>Test Run completed!</b>\nProcessed {len(vacancies)} vacancies.",
+                parse_mode="HTML",
+                reply_markup=flow_detail_keyboard(flow_id, (await flow_db.get_active_flow_id()) == flow_id),
+            )
 
     except Exception as e:
-        parts.append(f"\n❌ {bold('Error')}: {code(str(e)[:200])}")
-
-    result_text = "\n".join(parts)
-    if len(result_text) > 4000:
-        result_text = result_text[:3950] + f"\n\n{italic('... (truncated)')}"
-
-    from ..keyboards import flow_detail_keyboard
-    try:
+        logger.error(f"Test run error: {e}", exc_info=True)
+        from ..keyboards import flow_detail_keyboard
         await callback.message.edit_text(
-            result_text,
+            f"❌ <b>Test Run Error</b>: {code(str(e)[:200])}",
             parse_mode="HTML",
             reply_markup=flow_detail_keyboard(flow_id, (await flow_db.get_active_flow_id()) == flow_id),
         )
-    except Exception:
-        await callback.message.answer(result_text, parse_mode="HTML")
 
 
 # === Flows ===
@@ -261,7 +293,7 @@ async def flow_edit_callback(callback: CallbackQuery) -> None:
 async def flow_refresh_count_callback(callback: CallbackQuery) -> None:
     if not await _check_access(callback.from_user.id):
         return
-    await callback.answer("Fetching count...")
+    await callback.answer()
     try:
         parts = callback.data.split("_")
         flow_id = int(parts[1])
@@ -270,6 +302,14 @@ async def flow_refresh_count_callback(callback: CallbackQuery) -> None:
     flow = await flow_db.get_flow(flow_id)
     if not flow or not flow.config.search_url:
         return
+
+    await callback.message.edit_text(
+        f"<b>Flow: {flow.name}</b>\n\n⏳ <i>Fetching vacancy count from HH.ru...</i>",
+        parse_mode="HTML"
+    )
+
+    count = 0
+    success = False
     from ...services.hh_search import search_service
     from ...services.anti_fraud import AntiFraud
     from ...services.browser import browser_manager
@@ -284,11 +324,14 @@ async def flow_refresh_count_callback(callback: CallbackQuery) -> None:
             count = await search_service.get_vacancy_count(page)
             flow.config.vacancy_count = count
             await flow_db.update_flow(flow)
+            success = True
     except Exception as e:
         logger.warning(f"Failed to fetch vacancy count: {e}")
+
     from ..keyboards import flow_edit_keyboard
+    status_msg = f"✅ Vacancy count updated: <b>{count}</b>" if success else "❌ Failed to fetch vacancy count"
     await callback.message.edit_text(
-        f"<b>Flow: {flow.name}</b>\n\n{flow.config.summary()}",
+        f"<b>Flow: {flow.name}</b>\n\n{status_msg}\n\n{flow.config.summary()}",
         parse_mode="HTML",
         reply_markup=flow_edit_keyboard(flow_id, flow.config),
     )
@@ -298,7 +341,7 @@ async def flow_refresh_count_callback(callback: CallbackQuery) -> None:
 async def flow_refresh_resume_callback(callback: CallbackQuery) -> None:
     if not await _check_access(callback.from_user.id):
         return
-    await callback.answer("Refreshing resume...", show_alert=False)
+    await callback.answer()
     try:
         parts = callback.data.split("_")
         flow_id = int(parts[1])
@@ -307,16 +350,23 @@ async def flow_refresh_resume_callback(callback: CallbackQuery) -> None:
     flow = await flow_db.get_flow(flow_id)
     if not flow or not flow.config.resume_id:
         return
+
+    await callback.message.edit_text(
+        f"<b>Flow: {flow.name}</b>\n\n⏳ <i>Fetching resume text from HH.ru...</i>",
+        parse_mode="HTML"
+    )
+
     text = await hh_auth.get_resume_text(flow.config.resume_id)
+    success = False
     if text:
         flow.config.resume_text = text
         await flow_db.update_flow(flow_id, config=flow.config)
-        await callback.answer(f"Resume refreshed: {len(text)} chars", show_alert=True)
-    else:
-        await callback.answer("Failed to refresh resume", show_alert=True)
+        success = True
+
     from ..keyboards import flow_edit_keyboard
+    status_msg = f"✅ Resume refreshed: <b>{len(text)}</b> chars" if success else "❌ Failed to refresh resume"
     await callback.message.edit_text(
-        f"<b>Flow: {flow.name}</b>\n\n{flow.config.summary()}",
+        f"<b>Flow: {flow.name}</b>\n\n{status_msg}\n\n{flow.config.summary()}",
         parse_mode="HTML",
         reply_markup=flow_edit_keyboard(flow_id, flow.config),
     )
@@ -389,7 +439,10 @@ async def flow_set_resume_callback(callback: CallbackQuery) -> None:
     await flow_db.update_flow(flow_id, config=flow.config)
 
     if resume_id:
-        await callback.answer("Loading resume text...", show_alert=False)
+        await callback.message.edit_text(
+            f"<b>Flow: {flow.name}</b>\n\n⏳ <i>Fetching resume details from HH.ru...</i>",
+            parse_mode="HTML"
+        )
         text = await hh_auth.get_resume_text(resume_id)
         if text:
             flow.config.resume_text = text

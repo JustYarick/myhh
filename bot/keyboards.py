@@ -1,7 +1,24 @@
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton
 from urllib.parse import urlparse, parse_qs
 
 from ..services.flow_entity import FlowEntity, FlowConfig
+
+
+def main_menu_reply_keyboard(run_state: str = "idle") -> ReplyKeyboardMarkup:
+    controls = []
+    if run_state == "running":
+        controls = [KeyboardButton(text="⏸ Pause"), KeyboardButton(text="⏹ Stop")]
+    elif run_state == "paused":
+        controls = [KeyboardButton(text="▶️ Resume"), KeyboardButton(text="⏹ Stop")]
+    else:
+        controls = [KeyboardButton(text="▶️ Run")]
+
+    keyboard = [
+        controls,
+        [KeyboardButton(text="📂 Flows"), KeyboardButton(text="📊 Stats")],
+        [KeyboardButton(text="📜 History"), KeyboardButton(text="⚙️ Settings")]
+    ]
+    return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
 
 
 def main_menu_keyboard(hh_session_ok: bool, flows: list[FlowEntity], active_flow_id: int | None, run_state: str = "idle") -> InlineKeyboardMarkup:
@@ -198,3 +215,62 @@ def model_list_keyboard(models: list[dict], current_model: str) -> InlineKeyboar
         )])
     rows.append([InlineKeyboardButton(text="Back", callback_data="settings")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def settings_reply_keyboard(hh_linked: bool) -> ReplyKeyboardMarkup:
+    hh_button = KeyboardButton(text="🔓 Logout HH") if hh_linked else KeyboardButton(text="🔑 Login HH")
+    keyboard = [
+        [KeyboardButton(text="🤖 Choose Gemini Model"), hh_button],
+        [KeyboardButton(text="🔔 Notifications"), KeyboardButton(text="🧹 Clear Cache")],
+        [KeyboardButton(text="⬅️ Back to Main Menu")]
+    ]
+    return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
+
+
+def notifications_keyboard(success: bool, error: bool, skip: bool) -> InlineKeyboardMarkup:
+    btn_success = InlineKeyboardButton(
+        text=f"🟢 Success Applies: {'ON' if success else 'OFF'}",
+        callback_data="toggle_notify_success"
+    )
+    btn_error = InlineKeyboardButton(
+        text=f"🔴 Errors & Captchas: {'ON' if error else 'OFF'}",
+        callback_data="toggle_notify_error"
+    )
+    btn_skip = InlineKeyboardButton(
+        text=f"🟡 Skip Vacancies: {'ON' if skip else 'OFF'}",
+        callback_data="toggle_notify_skip"
+    )
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [btn_success],
+        [btn_error],
+        [btn_skip],
+        [InlineKeyboardButton(text="Back", callback_data="settings")]
+    ])
+
+
+def models_reply_keyboard(models: list[dict], current_model: str) -> ReplyKeyboardMarkup:
+    keyboard = []
+    row = []
+    for m in models:
+        marker = "⭐ " if m["name"] == current_model else ""
+        row.append(KeyboardButton(text=f"Model: {marker}{m['name']}"))
+        if len(row) == 2:
+            keyboard.append(row)
+            row = []
+    if row:
+        keyboard.append(row)
+    keyboard.append([KeyboardButton(text="⬅️ Back to Settings")])
+    return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
+
+
+def cancel_login_reply_keyboard() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(keyboard=[
+        [KeyboardButton(text="❌ Cancel Login")]
+    ], resize_keyboard=True)
+
+
+def confirm_logout_reply_keyboard() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(keyboard=[
+        [KeyboardButton(text="⚠️ Confirm Logout"), KeyboardButton(text="⬅️ Back to Settings")]
+    ], resize_keyboard=True)
+
