@@ -354,3 +354,25 @@ def flow_prompts_reply_keyboard() -> ReplyKeyboardMarkup:
         [KeyboardButton(text="⚙️ Edit Flow")]
     ], resize_keyboard=True)
 
+
+def timezone_select_keyboard(current: int) -> InlineKeyboardMarkup:
+    offsets = [
+        -11, -10, -9, -8, -7, -6, -5, -4, -3, -2, -1, 0,
+        1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12
+    ]
+    rows = []
+    current_row = []
+    for off in offsets:
+        sign = "+" if off >= 0 else ""
+        label = f"UTC{sign}{off}"
+        if off == current:
+            label = f"✅ {label}"
+        current_row.append(InlineKeyboardButton(text=label, callback_data=f"set_tz_{off}"))
+        if len(current_row) == 4:
+            rows.append(current_row)
+            current_row = []
+    if current_row:
+        rows.append(current_row)
+    rows.append([InlineKeyboardButton(text="Back", callback_data="settings")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+

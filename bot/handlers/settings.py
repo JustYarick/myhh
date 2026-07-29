@@ -275,23 +275,14 @@ async def toggle_monitoring_message(message: Message) -> None:
 async def settings_tz_callback(callback: CallbackQuery) -> None:
     if not await _check_access(callback.from_user.id):
         return
-    from ...services.flow_entity import get_setting, set_setting
+    from ...services.flow_entity import get_setting
+    from ..keyboards import timezone_select_keyboard
     current = int(await get_setting("monitoring_timezone_offset", "3"))
-    offsets = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, -11, -10, -9, -8, -7, -6, -5, -4, -3, -2, -1]
-    next_idx = (offsets.index(current) + 1) % len(offsets) if current in offsets else 3
-    new_val = offsets[next_idx]
-    await set_setting("monitoring_timezone_offset", str(new_val))
     
-    # Reload settings view
-    gemini_model = await get_setting("gemini_model", "gemini-2.0-flash")
-    hh_ok = hh_auth.session_exists()
-    from ..keyboards import settings_keyboard
-    
-    await callback.answer(f"Часовой пояс изменен на UTC{'+' if new_val >= 0 else ''}{new_val}")
     await callback.message.edit_text(
-        "<b>Global Settings</b>",
+        "🌐 <b>Выбор часового пояса:</b>\nВыберите часовой пояс относительно UTC для корректного времени работы мониторинга.",
         parse_mode="HTML",
-        reply_markup=settings_keyboard(gemini_model, hh_ok, tz_offset=new_val),
+        reply_markup=timezone_select_keyboard(current),
     )
 
 
@@ -299,30 +290,35 @@ async def settings_tz_callback(callback: CallbackQuery) -> None:
 async def settings_timezone_message_handler(message: Message) -> None:
     if not await _check_access(message.from_user.id):
         return
-    from ...services.flow_entity import get_setting, set_setting
+    from ...services.flow_entity import get_setting
+    from ..keyboards import timezone_select_keyboard
     current = int(await get_setting("monitoring_timezone_offset", "3"))
-    offsets = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, -11, -10, -9, -8, -7, -6, -5, -4, -3, -2, -1]
-    next_idx = (offsets.index(current) + 1) % len(offsets) if current in offsets else 3
-    new_val = offsets[next_idx]
+    
+    await message.answer(
+        "🌐 <b>Выбор часового пояса:</b>\nВыберите часовой пояс относительно UTC для корректного времени работы мониторинга.",
+        parse_mode="HTML",
+        reply_markup=timezone_select_keyboard(current),
+    )
+
+
+@settings_router.callback_query(F.data.startswith("set_tz_"))
+async def set_timezone_callback(callback: CallbackQuery) -> None:
+    if not await _check_access(callback.from_user.id):
+        return
+    from ...services.flow_entity import get_setting, set_setting
+    new_val = int(callback.data.split("_")[-1])
     await set_setting("monitoring_timezone_offset", str(new_val))
     
-    await message.answer(f"🌐 Часовой пояс изменен на: <b>UTC{'+' if new_val >= 0 else ''}{new_val}</b>.", parse_mode="HTML")
+    await callback.answer(f"Часовой пояс изменен на UTC{'+' if new_val >= 0 else ''}{new_val}")
     
-    # Send updated settings view
-    from ..keyboards import settings_reply_keyboard
+    # Reload settings view
     gemini_model = await get_setting("gemini_model", "gemini-2.0-flash")
     hh_ok = hh_auth.session_exists()
-    hh_status = "Linked" if hh_ok else "Not linked"
+    from ..keyboards import settings_keyboard
     
-    text = (
-        f"⚙️ <b>Global Settings</b>\n\n"
-        f"🤖 Gemini model: <code>{gemini_model}</code>\n"
-        f"🔑 HH Account: <b>{hh_status}</b>\n"
-        f"🌐 Часовой пояс: <b>UTC{'+' if new_val >= 0 else ''}{new_val}</b>"
-    )
-    await message.answer(
-        text,
+    await callback.message.edit_text(
+        "<b>Global Settings</b>",
         parse_mode="HTML",
-        reply_markup=settings_reply_keyboard(hh_ok, tz_offset=new_val),
+        reply_markup=settings_keyboard(gemini_model, hh_ok, tz_offset=new_val),
     )
 

@@ -89,11 +89,23 @@ def format_apply_success(
 
 def format_session_finished(total: int, successful: int, errors: int, skipped: int = 0) -> str:
     return (
-        f"📊 <b>Обход новых вакансий завершен</b>\n"
+        f"📊 <b>Сессия авто-откликов завершена</b>\n"
         f"📋 Обработано сегодня: <b>{total}</b>\n"
         f"🟢 Успешных откликов: <b>{successful}</b>\n"
         f"🟡 Пропущено (ИИ/фильтры): <b>{skipped}</b>\n"
         f"🔴 Ошибок: <b>{errors}</b>"
+    )
+
+
+def format_monitoring_finished(total: int, successful: int, errors: int, skipped: int = 0, next_run: str = "") -> str:
+    return (
+        f"📊 <b>Обход новых вакансий завершен</b>\n\n"
+        f"⏱ <b>Статистика текущего обхода:</b>\n"
+        f"• Всего проверено: <b>{total}</b>\n"
+        f"• Откликов отправлено: <b>{successful}</b>\n"
+        f"• Пропущено (ИИ/кэш): <b>{skipped}</b>\n"
+        f"• Ошибок: <b>{errors}</b>\n\n"
+        f"⏱ Следующий запуск: <b>{next_run}</b>"
     )
 
 

@@ -14,7 +14,7 @@ from .services.gemini import gemini_service
 from .services.flow_entity import FlowConfig, get_active_flow, update_flow, get_active_flow_id
 from .services.browser import browser_manager
 from .services.hh_auth import hh_auth
-from .bot.formatting import format_apply_success, format_session_finished, format_scheduler_status
+from .bot.formatting import format_apply_success, format_session_finished, format_scheduler_status, format_monitoring_finished
 
 logger = logging.getLogger(__name__)
 
@@ -527,6 +527,9 @@ class Scheduler:
             context, page = await browser_manager.create_run_context()
             logger.info("Created shared browser context for run")
             session_success_count = 0
+            session_skipped_count = 0
+            session_error_count = 0
+            session_total_processed = 0
 
             # Search up to 40 pages (hh.ru limit) to satisfy the target apply limit
             max_search_pages = 40
@@ -636,17 +639,22 @@ class Scheduler:
                             ),
                             timeout=180.0
                         )
+                        session_total_processed += 1
                         if applied:
                             session_success_count += 1
                             if session_success_count >= config.target_applies:
                                 await self._notify(f"🎯 <b>Целевой лимит достигнут!</b> Отправлено <b>{session_success_count}</b> откликов за этот запуск.")
                                 self._stop_event.set()
                                 break
+                        else:
+                            session_skipped_count += 1
                     except _CaptchaPause:
                         break
                     except asyncio.CancelledError:
                         raise
                     except asyncio.TimeoutError:
+                        session_total_processed += 1
+                        session_error_count += 1
                         logger.error(
                             f"Timeout processing vacancy '{card.get('title', '?')}' "
                             f"({card.get('url', '?')}) - took more than 3 minutes."
@@ -673,6 +681,8 @@ class Scheduler:
                         )
                         continue
                     except Exception as e:
+                        session_total_processed += 1
+                        session_error_count += 1
                         logger.error(
                             f"Failed processing vacancy '{card.get('title', '?')}' "
                             f"({card.get('url', '?')}): {e}",
@@ -732,15 +742,38 @@ class Scheduler:
 
             self._run_state = RunState.IDLE
             self.state = BotState()
-            stats = await db.get_today_stats()
-            await self._notify(
-                format_session_finished(
-                    total=stats["total_applied"],
-                    successful=stats["successful"],
-                    errors=stats["errors"],
-                    skipped=stats["analyzed_skip"] + stats["skipped"],
+            if self.name == "Monitoring":
+                interval_mins = int(await db.get_setting("monitoring_interval", "30"))
+                jitter_mins = int(await db.get_setting("monitoring_jitter", "0"))
+                
+                # Pre-calculate the next run's jitter so we can notify the user exactly
+                import random
+                next_jitter_secs = random.randint(0, jitter_mins * 60) if jitter_mins > 0 else 0
+                await db.set_setting("monitoring_next_jitter", str(next_jitter_secs))
+                
+                next_run_str = f"{interval_mins} мин"
+                if next_jitter_secs > 0:
+                    next_run_str += f" (+ {next_jitter_secs // 60}м {next_jitter_secs % 60}с рандом задержки)"
+                
+                await self._notify(
+                    format_monitoring_finished(
+                        total=session_total_processed,
+                        successful=session_success_count,
+                        errors=session_error_count,
+                        skipped=session_skipped_count,
+                        next_run=next_run_str,
+                    )
                 )
-            )
+            else:
+                stats = await db.get_today_stats()
+                await self._notify(
+                    format_session_finished(
+                        total=stats["total_applied"],
+                        successful=stats["successful"],
+                        errors=stats["errors"],
+                        skipped=stats["analyzed_skip"] + stats["skipped"],
+                    )
+                )
 
     def get_status_text(self) -> str:
         if self._run_state == RunState.RUNNING:
@@ -822,8 +855,14 @@ async def monitoring_daemon_loop() -> None:
                 # Skip Jitter delay entirely if there is no baseline set yet (so baseline is established immediately)
                 jitter = int(await db.get_setting("monitoring_jitter", "0"))
                 if jitter > 0 and last_newest_url:
-                    import random
-                    delay_secs = random.randint(0, jitter * 60)
+                    saved_jitter = await db.get_setting("monitoring_next_jitter", "")
+                    if saved_jitter:
+                        delay_secs = int(saved_jitter)
+                        # Clear it so it is not reused next time
+                        await db.set_setting("monitoring_next_jitter", "")
+                    else:
+                        import random
+                        delay_secs = random.randint(0, jitter * 60)
                     logger.info(f"Jitter delay: sleeping for {delay_secs} seconds before starting monitoring run")
                     # Check enabled status while sleeping in jitter
                     for _ in range(delay_secs // 5):
