@@ -247,26 +247,8 @@ async def enable_monitoring_message(message: Message) -> None:
     flow_id = await get_active_flow_id()
     if flow_id:
         await db.set_setting(f"last_newest_vacancy_{flow_id}", "")
-    prime_time = await db.get_setting("monitoring_prime_time", "24/7")
-    tz_offset = int(await db.get_setting("monitoring_timezone_offset", "3"))
-    is_inside = True
-    from datetime import datetime, timedelta, timezone
-    user_time = datetime.now(timezone.utc) + timedelta(hours=tz_offset)
-    if prime_time != "24/7":
-        import re
-        current_hour = user_time.hour
-        match = re.search(r"(\d{2}):\d{2}\s*-\s*(\d{2}):\d{2}", prime_time)
-        if match:
-            start_h = int(match.group(1))
-            end_h = int(match.group(2))
-            if start_h <= end_h:
-                is_inside = start_h <= current_hour < end_h
-            else:
-                is_inside = current_hour >= start_h or current_hour < end_h
-    if not is_inside:
-        await message.answer(f"✅ Мониторинг вакансий <b>включен</b>.\n💤 Проверки приостановлены: текущее местное время {user_time.strftime('%H:%M')} находится вне рабочего диапазона (<b>{prime_time}</b>, UTC{'+' if tz_offset >= 0 else ''}{tz_offset}).\nБот зафиксирует точку отсчета и начнет обход при наступлении рабочего времени.", parse_mode="HTML")
-    else:
-        await message.answer("✅ Мониторинг вакансий <b>включен</b>. Устанавливаю базовую точку отсчета свежих вакансий...", parse_mode="HTML")
+    
+    await message.answer("✅ Мониторинг вакансий <b>включен</b>. Устанавливаю базовую точку отсчета свежих вакансий...", parse_mode="HTML")
     await _monitoring_menu_message(message)
 
 

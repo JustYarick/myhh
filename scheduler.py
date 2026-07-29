@@ -164,7 +164,11 @@ class Scheduler:
         time_str = user_time.strftime("%d/%m/%y %H:%M:%S")
 
         if self.name == "Monitoring":
-            start_msg = "🔍 <b>Начало обхода новых вакансий...</b>"
+            last_newest_url = await db.get_setting(f"last_newest_vacancy_{flow.id}", "")
+            if last_newest_url:
+                start_msg = "🔍 <b>Начало обхода новых вакансий...</b>"
+            else:
+                start_msg = None
         else:
             start_msg = (
                 f"🚀 <b>Запуск планировщика</b>\n\n"
@@ -182,7 +186,8 @@ class Scheduler:
         self._run_state = RunState.RUNNING
         self.state = BotState(is_running=True)
         self._task = asyncio.create_task(self._run_loop(flow.config))
-        await self._notify(start_msg)
+        if start_msg:
+            await self._notify(start_msg)
 
     async def stop(self) -> None:
         if self._run_state == RunState.IDLE:
@@ -549,7 +554,8 @@ class Scheduler:
                     await self._notify(f"🛑 Stopping: {reason}", notify_type="error")
                     break
 
-                await self._notify(f"🔍 Searching page <b>{page_num + 1}/{max_search_pages}</b>...")
+                if last_newest_url or self.name != "Monitoring":
+                    await self._notify(f"🔍 Searching page <b>{page_num + 1}/{max_search_pages}</b>...")
                 self.state.current_page = page_num + 1
 
                 # A search failure (timeout, layout change, network blip)
@@ -758,15 +764,20 @@ class Scheduler:
                 if next_jitter_secs > 0:
                     next_run_str += f" (+ {next_jitter_secs // 60}м {next_jitter_secs % 60}с рандом задержки)"
                 
-                await self._notify(
-                    format_monitoring_finished(
-                        total=session_total_processed,
-                        successful=session_success_count,
-                        errors=session_error_count,
-                        skipped=session_skipped_count,
-                        next_run=next_run_str,
+                if last_newest_url:
+                    await self._notify(
+                        format_monitoring_finished(
+                            total=session_total_processed,
+                            successful=session_success_count,
+                            errors=session_error_count,
+                            skipped=session_skipped_count,
+                            next_run=next_run_str,
+                        )
                     )
-                )
+                else:
+                    await self._notify(
+                        f"⏱ Следующий запуск: <b>{next_run_str}</b>"
+                    )
             else:
                 stats = await db.get_today_stats()
                 await self._notify(
@@ -830,7 +841,7 @@ async def monitoring_daemon_loop() -> None:
 
                 # 1. Check Prime Time and Timezone
                 prime_time = await db.get_setting("monitoring_prime_time", "24/7")
-                if prime_time != "24/7":
+                if prime_time != "24/7" and last_newest_url:
                     tz_offset = int(await db.get_setting("monitoring_timezone_offset", "3"))
                     # Calculate current hour in user's timezone
                     from datetime import datetime, timedelta, timezone
