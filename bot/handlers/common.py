@@ -294,20 +294,6 @@ async def toggle_monitoring_prime_time_message(message: Message) -> None:
     await _monitoring_menu_message(message)
 
 
-@common_router.message(F.text.startswith("🌐 Часовой пояс:"))
-async def toggle_monitoring_timezone_message(message: Message) -> None:
-    if not await _check_access(message.from_user.id):
-        return
-    current = int(await db.get_setting("monitoring_timezone_offset", "3"))
-    # Cycle timezone offsets from -11 to +12
-    offsets = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, -11, -10, -9, -8, -7, -6, -5, -4, -3, -2, -1]
-    next_idx = (offsets.index(current) + 1) % len(offsets) if current in offsets else 3
-    new_val = offsets[next_idx]
-    await db.set_setting("monitoring_timezone_offset", str(new_val))
-    label = f"UTC{'+' if new_val >= 0 else ''}{new_val}"
-    await message.answer(f"🌐 Часовой пояс мониторинга изменен на: <b>{label}</b>.", parse_mode="HTML")
-    await _monitoring_menu_message(message)
-
 
 @common_router.message(F.text == "🔴 Выключить мониторинг")
 async def disable_monitoring_message(message: Message) -> None:
