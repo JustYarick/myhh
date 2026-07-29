@@ -14,6 +14,15 @@ from .playwright_utils import check_bot_protection
 logger = logging.getLogger(__name__)
 
 
+def prepare_search_url(url: str) -> str:
+    if not url:
+        return ""
+    if "order_by=" not in url:
+        sep = "&" if "?" in url else "?"
+        url = f"{url}{sep}order_by=publication_time"
+    return url
+
+
 class HHSearchService:
 
     async def _get_vacancy_description(self, page: Page, url: str) -> str:
@@ -112,13 +121,14 @@ class HHSearchService:
     async def _parse_vacancy_cards(self, page: Page) -> list[dict]:
         vacancy_data: list[dict] = []
         cards = await page.locator("[data-qa='vacancy-serp__vacancy']").all()
-
         for i, card in enumerate(cards):
             try:
                 title_el = card.locator("[data-qa='serp-item__title']")
                 await title_el.wait_for(state="visible", timeout=5000)
 
                 href = await title_el.get_attribute("href")
+                if href:
+                    href = href.split("?")[0]
                 title = await title_el.inner_text()
 
                 employer_el = card.locator(
@@ -225,9 +235,7 @@ class HHSearchService:
         url: str = "",
         existing_page: Optional[Page] = None,
     ) -> tuple[Optional[Page], list[dict], Optional[object]]:
-        if "order_by=" not in url:
-            sep = "&" if "?" in url else "?"
-            url = f"{url}{sep}order_by=publication_time"
+        url = prepare_search_url(url)
 
         if "page=" not in url:
             sep = "&" if "?" in url else "?"

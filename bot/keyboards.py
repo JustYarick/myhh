@@ -28,12 +28,16 @@ def manual_mode_reply_keyboard(run_state: str = "idle") -> ReplyKeyboardMarkup:
     ], resize_keyboard=True)
 
 
-def monitoring_mode_reply_keyboard(enabled: bool) -> ReplyKeyboardMarkup:
-    toggle_btn = KeyboardButton(text="🔴 Выключить авто-поиск") if enabled else KeyboardButton(text="🟢 Включить авто-поиск")
+def monitoring_mode_reply_keyboard(enabled: bool, interval: int = 30, jitter: int = 0, prime_time: str = "24/7") -> ReplyKeyboardMarkup:
+    toggle_btn = KeyboardButton(text="🔴 Выключить мониторинг") if enabled else KeyboardButton(text="🟢 Включить мониторинг")
+    pt_text = f"🕒 Время: {prime_time}"
+    jitter_text = f"🎲 Рандом: {jitter}м" if jitter > 0 else "🎲 Рандом: Выкл"
     return ReplyKeyboardMarkup(keyboard=[
         [toggle_btn],
-        [KeyboardButton(text="📂 Flows"), KeyboardButton(text="📊 Stats")],
-        [KeyboardButton(text="📜 History"), KeyboardButton(text="⬅️ Back to Main Menu")]
+        [KeyboardButton(text=f"⏱ Интервал: {interval}м"), KeyboardButton(text=jitter_text)],
+        [KeyboardButton(text=pt_text), KeyboardButton(text="📂 Flows")],
+        [KeyboardButton(text="📊 Stats"), KeyboardButton(text="📜 History")],
+        [KeyboardButton(text="⬅️ Back to Main Menu")]
     ], resize_keyboard=True)
 
 
@@ -211,11 +215,13 @@ def back_keyboard(callback_data: str = "main_menu") -> InlineKeyboardMarkup:
     ])
 
 
-def settings_keyboard(gemini_model: str, hh_linked: bool) -> InlineKeyboardMarkup:
+def settings_keyboard(gemini_model: str, hh_linked: bool, tz_offset: int = 3) -> InlineKeyboardMarkup:
     hh_status = "Linked" if hh_linked else "Not linked"
+    tz_label = f"🌐 Часовой пояс: UTC{'+' if tz_offset >= 0 else ''}{tz_offset}"
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text=f"Gemini model: {gemini_model}", callback_data="settings_model")],
         [InlineKeyboardButton(text=f"HH Account: {hh_status}", callback_data="settings_hh")],
+        [InlineKeyboardButton(text=tz_label, callback_data="settings_tz")],
         [InlineKeyboardButton(text="Back", callback_data="main_menu")],
     ])
 

@@ -199,17 +199,28 @@ async def _monitoring_menu_message(message: Message) -> None:
     from ..keyboards import monitoring_mode_reply_keyboard
     from ...scheduler import monitoring_scheduler
     monitoring_enabled = (await db.get_setting("monitoring_mode", "false")) == "true"
+    interval = int(await db.get_setting("monitoring_interval", "30"))
+    jitter = int(await db.get_setting("monitoring_jitter", "0"))
+    prime_time = await db.get_setting("monitoring_prime_time", "24/7")
+    tz_offset = int(await db.get_setting("monitoring_timezone_offset", "3"))
+
     run_status = "РАБОТАЕТ" if monitoring_scheduler._run_state.value == "running" else "ОЖИДАНИЕ"
+    
     text = (
         f"🔍 <b>Режим авто-мониторинга</b>\n\n"
         f"Фоновый запуск: {'<b>АКТИВЕН</b> 🟢' if monitoring_enabled else '<b>ВЫКЛЮЧЕН</b> 🔴'}\n"
+        f"Интервал проверки: <b>Каждые {interval} минут</b>\n"
+        f"Случайный сдвиг (Рандом): <b>{jitter if jitter > 0 else 'Выключен'} мин</b>\n"
+        f"Время работы: <b>{prime_time}</b> (по UTC{'+' if tz_offset >= 0 else ''}{tz_offset})\n"
         f"Текущая сессия поиска: <b>{run_status}</b>\n\n"
-        f"Каждые 30 минут бот сканирует выдачу по дате публикации и откликается на новые подходящие вакансии в фоне."
+        f"Бот автоматически отслеживает и откликается только на новые вакансии, опубликованные с момента запуска мониторинга."
     )
     await message.answer(
         text,
         parse_mode="HTML",
-        reply_markup=monitoring_mode_reply_keyboard(monitoring_enabled)
+        reply_markup=monitoring_mode_reply_keyboard(
+            monitoring_enabled, interval=interval, jitter=jitter, prime_time=prime_time
+        )
     )
 
 
@@ -227,21 +238,88 @@ async def monitoring_mode_message(message: Message) -> None:
     await _monitoring_menu_message(message)
 
 
-@common_router.message(F.text == "🟢 Включить авто-поиск")
+@common_router.message(F.text == "🟢 Включить мониторинг")
 async def enable_monitoring_message(message: Message) -> None:
     if not await _check_access(message.from_user.id):
         return
     await db.set_setting("monitoring_mode", "true")
-    await message.answer("✅ Авто-поиск вакансий по расписанию <b>включен</b> (каждые 30 минут).", parse_mode="HTML")
+    
+    # Reset/clear baseline boundary URL so it initializes immediately on the next daemon tick!
+    from ...services.flow_entity import get_active_flow_id
+    flow_id = await get_active_flow_id()
+    if flow_id:
+        await db.set_setting(f"last_newest_vacancy_{flow_id}", "")
+
+    await message.answer("✅ Мониторинг вакансий <b>включен</b>. Устанавливаю базовую точку отсчета свежих вакансий...", parse_mode="HTML")
     await _monitoring_menu_message(message)
 
 
-@common_router.message(F.text == "🔴 Выключить авто-поиск")
+@common_router.message(F.text.startswith("⏱ Интервал:"))
+async def toggle_monitoring_interval_message(message: Message) -> None:
+    if not await _check_access(message.from_user.id):
+        return
+    current = int(await db.get_setting("monitoring_interval", "30"))
+    intervals = [15, 30, 60, 120]
+    next_idx = (intervals.index(current) + 1) % len(intervals) if current in intervals else 1
+    new_val = intervals[next_idx]
+    await db.set_setting("monitoring_interval", str(new_val))
+    await message.answer(f"⏱ Интервал мониторинга изменен на <b>{new_val} минут</b>.", parse_mode="HTML")
+    await _monitoring_menu_message(message)
+
+
+@common_router.message(F.text.startswith("🎲 Рандом:"))
+async def toggle_monitoring_jitter_message(message: Message) -> None:
+    if not await _check_access(message.from_user.id):
+        return
+    current = int(await db.get_setting("monitoring_jitter", "0"))
+    jitters = [0, 5, 10, 15]
+    next_idx = (jitters.index(current) + 1) % len(jitters) if current in jitters else 1
+    new_val = jitters[next_idx]
+    await db.set_setting("monitoring_jitter", str(new_val))
+    label = f"{new_val} минут" if new_val > 0 else "Выключен"
+    await message.answer(f"🎲 Рандомный сдвиг запуска изменен на: <b>{label}</b>.", parse_mode="HTML")
+    await _monitoring_menu_message(message)
+
+
+@common_router.message(F.text.startswith("🕒 Время:"))
+async def toggle_monitoring_prime_time_message(message: Message) -> None:
+    if not await _check_access(message.from_user.id):
+        return
+    current = await db.get_setting("monitoring_prime_time", "24/7")
+    options = ["24/7", "08:00 - 20:00", "09:00 - 18:00", "10:00 - 22:00"]
+    next_idx = (options.index(current) + 1) % len(options) if current in options else 1
+    new_val = options[next_idx]
+    await db.set_setting("monitoring_prime_time", new_val)
+    await message.answer(f"🕒 Время работы мониторинга изменено на: <b>{new_val}</b>.", parse_mode="HTML")
+    await _monitoring_menu_message(message)
+
+
+@common_router.message(F.text.startswith("🌐 Часовой пояс:"))
+async def toggle_monitoring_timezone_message(message: Message) -> None:
+    if not await _check_access(message.from_user.id):
+        return
+    current = int(await db.get_setting("monitoring_timezone_offset", "3"))
+    # Cycle timezone offsets from -11 to +12
+    offsets = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, -11, -10, -9, -8, -7, -6, -5, -4, -3, -2, -1]
+    next_idx = (offsets.index(current) + 1) % len(offsets) if current in offsets else 3
+    new_val = offsets[next_idx]
+    await db.set_setting("monitoring_timezone_offset", str(new_val))
+    label = f"UTC{'+' if new_val >= 0 else ''}{new_val}"
+    await message.answer(f"🌐 Часовой пояс мониторинга изменен на: <b>{label}</b>.", parse_mode="HTML")
+    await _monitoring_menu_message(message)
+
+
+@common_router.message(F.text == "🔴 Выключить мониторинг")
 async def disable_monitoring_message(message: Message) -> None:
     if not await _check_access(message.from_user.id):
         return
     await db.set_setting("monitoring_mode", "false")
-    await message.answer("❌ Авто-поиск вакансий по расписанию <b>выключен</b>.", parse_mode="HTML")
+    
+    from ...scheduler import monitoring_scheduler, RunState
+    if monitoring_scheduler._run_state != RunState.IDLE:
+        await monitoring_scheduler.stop()
+        
+    await message.answer("❌ Мониторинг вакансий <b>выключен</b> (активная сессия остановлена).", parse_mode="HTML")
     await _monitoring_menu_message(message)
 
 

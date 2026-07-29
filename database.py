@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Optional
 
 from .config import get_settings
+import re
 
 logger = logging.getLogger(__name__)
 
@@ -16,6 +17,17 @@ def _get_db_path() -> Path:
     if DB_PATH is None:
         DB_PATH = get_settings().db_file
     return DB_PATH
+
+
+def extract_vacancy_id(url: str) -> str:
+    if not url:
+        return ""
+    match = re.search(r"/vacancy/(\d+)", url)
+    if match:
+        return match.group(1)
+    if url.isdigit():
+        return url
+    return url
 
 
 async def init_db() -> None:
@@ -112,39 +124,72 @@ async def init_db() -> None:
             )
         """)
 
+        # Migrate vacancy_cache to use numeric IDs instead of URLs
+        try:
+            async with db.execute("SELECT vacancy_url FROM vacancy_cache") as cursor:
+                rows = await cursor.fetchall()
+            for row in rows:
+                old_url = row[0]
+                v_id = extract_vacancy_id(old_url)
+                if v_id and v_id != old_url:
+                    try:
+                        await db.execute(
+                            "UPDATE vacancy_cache SET vacancy_url = ? WHERE vacancy_url = ?",
+                            (v_id, old_url)
+                        )
+                    except Exception:
+                        await db.execute("DELETE FROM vacancy_cache WHERE vacancy_url = ?", (old_url,))
+            
+            async with db.execute("SELECT id, vacancy_url FROM applied_vacancies") as cursor:
+                rows = await cursor.fetchall()
+            for row in rows:
+                row_id, old_url = row[0], row[1]
+                v_id = extract_vacancy_id(old_url)
+                if v_id and v_id != old_url:
+                    await db.execute(
+                        "UPDATE applied_vacancies SET vacancy_url = ? WHERE id = ?",
+                        (v_id, row_id)
+                    )
+            logger.info("Database migration completed: URL keys migrated to numeric vacancy IDs")
+        except Exception as migration_err:
+            logger.warning(f"Vacancy ID database migration skipped or failed: {migration_err}")
+
         await db.commit()
     logger.info(f"Database initialized: {db_path}")
 
 
 async def was_vacancy_applied(vacancy_url: str) -> bool:
     db_path = _get_db_path()
+    v_id = extract_vacancy_id(vacancy_url)
     async with aiosqlite.connect(str(db_path)) as db:
         cursor = await db.execute(
             "SELECT 1 FROM applied_vacancies WHERE vacancy_url = ? AND status != 'error' LIMIT 1",
-            (vacancy_url,)
+            (v_id,)
         )
         return await cursor.fetchone() is not None
 
 
 async def is_vacancy_cached(vacancy_url: str, ttl_days: int = 30) -> bool:
     db_path = _get_db_path()
+    v_id = extract_vacancy_id(vacancy_url)
     async with aiosqlite.connect(str(db_path)) as db:
         cursor = await db.execute(
             """SELECT 1 FROM vacancy_cache
                WHERE vacancy_url = ?
                AND result != 'parsed'
                AND processed_at >= datetime('now', ?) LIMIT 1""",
-            (vacancy_url, f"-{ttl_days} days"),
+            (v_id, f"-{ttl_days} days"),
         )
         return await cursor.fetchone() is not None
 
 
 async def get_cached_vacancy_result(vacancy_url: str) -> dict | None:
     db_path = _get_db_path()
+    v_id = extract_vacancy_id(vacancy_url)
     async with aiosqlite.connect(str(db_path)) as db:
         db.row_factory = aiosqlite.Row
         cursor = await db.execute(
-            "SELECT * FROM vacancy_cache WHERE vacancy_url = ?", (vacancy_url,)
+            "SELECT * FROM vacancy_cache WHERE vacancy_url = ?", (v_id,)
         )
         row = await cursor.fetchone()
         return dict(row) if row else None
@@ -159,6 +204,7 @@ async def cache_vacancy_result(
     result: str,
 ) -> None:
     db_path = _get_db_path()
+    v_id = extract_vacancy_id(vacancy_url)
     async with aiosqlite.connect(str(db_path)) as db:
         await db.execute(
             """INSERT INTO vacancy_cache
@@ -171,17 +217,18 @@ async def cache_vacancy_result(
                    ai_summary = excluded.ai_summary,
                    result = excluded.result,
                    processed_at = CURRENT_TIMESTAMP""",
-            (vacancy_url, title, employer, ai_relevance, ai_summary, result),
+            (v_id, title, employer, ai_relevance, ai_summary, result),
         )
         await db.commit()
 
 
 async def get_cached_vacancy_description(vacancy_url: str) -> Optional[str]:
     db_path = _get_db_path()
+    v_id = extract_vacancy_id(vacancy_url)
     async with aiosqlite.connect(str(db_path)) as db:
         cursor = await db.execute(
             "SELECT description FROM vacancy_cache WHERE vacancy_url = ? LIMIT 1",
-            (vacancy_url,)
+            (v_id,)
         )
         row = await cursor.fetchone()
         return row[0] if row and row[0] else None
@@ -194,6 +241,7 @@ async def save_vacancy_description_to_cache(
     description: str,
 ) -> None:
     db_path = _get_db_path()
+    v_id = extract_vacancy_id(vacancy_url)
     async with aiosqlite.connect(str(db_path)) as db:
         await db.execute(
             """INSERT INTO vacancy_cache (vacancy_url, title, employer, description, result)
@@ -202,7 +250,7 @@ async def save_vacancy_description_to_cache(
                    title = excluded.title,
                    employer = excluded.employer,
                    description = excluded.description""",
-            (vacancy_url, title, employer, description),
+            (v_id, title, employer, description),
         )
         await db.commit()
 
@@ -226,13 +274,14 @@ async def save_application(
     error_message: str = "",
 ) -> None:
     db_path = _get_db_path()
+    v_id = extract_vacancy_id(vacancy_url)
     async with aiosqlite.connect(str(db_path)) as db:
         await db.execute(
             """INSERT INTO applied_vacancies
                (vacancy_url, title, employer, description, cover_letter,
                 ai_relevance, ai_analysis, status, error_message)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (vacancy_url, title, employer, description[:2000], cover_letter,
+            (v_id, title, employer, description[:2000], cover_letter,
              ai_relevance, ai_analysis, status, error_message),
         )
         await db.commit()

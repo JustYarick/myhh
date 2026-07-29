@@ -6,8 +6,9 @@ from typing import Optional, Callable, Awaitable
 from .config import get_settings
 from .models import BotState, ApplyStatus, Vacancy
 from . import database as db
+from .database import extract_vacancy_id
 from .services.anti_fraud import AntiFraud
-from .services.hh_search import search_service
+from .services.hh_search import search_service, prepare_search_url
 from .services.hh_apply import apply_service
 from .services.gemini import gemini_service
 from .services.flow_entity import FlowConfig, get_active_flow, update_flow, get_active_flow_id
@@ -152,12 +153,33 @@ class Scheduler:
             await self._notify("❌ No active flow. Create and activate one first.")
             return
 
+        # Prepare start notification text
+        mod_url = prepare_search_url(flow.config.search_url)
+        gemini_model = await db.get_setting("gemini_model", "gemini-2.0-flash")
+        
+        # Local user time
+        from datetime import datetime, timedelta, timezone
+        tz_offset = int(await db.get_setting("monitoring_timezone_offset", "3"))
+        user_time = datetime.now(timezone.utc) + timedelta(hours=tz_offset)
+        time_str = user_time.strftime("%d/%m/%y %H:%M:%S")
+
+        start_msg = (
+            f"🚀 <b>Запуск планировщика</b>\n\n"
+            f"📅 Время запуска: <code>{time_str}</code> (UTC{'+' if tz_offset >= 0 else ''}{tz_offset})\n"
+            f"📂 Поток: <b>{flow.name}</b>\n"
+            f"🎯 Цель за запуск: <b>{flow.config.target_applies}</b> откл.\n"
+            f"⏱ Суточный лимит: <b>{flow.config.max_apps_per_day}</b> откл.\n"
+            f"🤖 Модель ИИ: <code>{gemini_model}</code>\n"
+            f"⏱ Паузы: <b>{flow.config.delay_min}-{flow.config.delay_max}</b> сек.\n"
+            f"🔗 Ссылка поиска:\n<code>{mod_url}</code>"
+        )
+
         self._stop_event.clear()
         self._resume_event.set()
         self._run_state = RunState.RUNNING
         self.state = BotState(is_running=True)
         self._task = asyncio.create_task(self._run_loop(flow.config))
-        await self._notify(f"▶️ <b>Auto-apply started</b>: <i>{flow.name}</i>")
+        await self._notify(start_msg)
 
     async def stop(self) -> None:
         if self._run_state == RunState.IDLE:
@@ -170,14 +192,10 @@ class Scheduler:
 
         if self._task:
             self._task.cancel()
-            try:
-                await asyncio.wait_for(self._task, timeout=10)
-            except (asyncio.CancelledError, asyncio.TimeoutError):
-                pass
             self._task = None
 
         self.state = BotState()
-        await self._notify("⏹ <b>Auto-apply stopped</b>")
+        await self._notify("⏹ <b>Работа планировщика остановлена</b>")
 
     async def pause(self) -> None:
         if self._run_state != RunState.RUNNING:
@@ -480,12 +498,19 @@ class Scheduler:
         anti_fraud = AntiFraud(config)
         resume_text = config.resume_text
 
+        flow_id = await get_active_flow_id()
+        last_newest_url = ""
+        if flow_id:
+            last_newest_url = await db.get_setting(f"last_newest_vacancy_{flow_id}", "")
+            logger.info(f"Loaded boundary url for flow {flow_id}: {last_newest_url}")
+
+        new_boundary_url = None
+
         if not resume_text and config.resume_id:
             logger.info(f"Resume text not cached, fetching for resume_id={config.resume_id}")
             resume_text = await self._run_interruptible(hh_auth.get_resume_text(config.resume_id))
             if resume_text:
                 config.resume_text = resume_text
-                flow_id = await get_active_flow_id()
                 if flow_id:
                     await update_flow(flow_id, config=config)
                 logger.info(f"Resume text fetched and cached: {len(resume_text)} chars")
@@ -557,14 +582,40 @@ class Scheduler:
                     await self._notify(f"📭 No vacancies found on page {page_num + 1}")
                     break
 
+                if page_num == 0:
+                    first_url = cards[0]["url"]
+                    first_id = extract_vacancy_id(first_url) if first_url else ""
+                    new_boundary_url = first_id
+
+                    # If there's no baseline set, establish it now and stop
+                    if not last_newest_url:
+                        await self._notify(
+                            f"🏁 <b>Базовая точка мониторинга установлена</b>:\n"
+                            f"Вакансия ID: <code>{first_id}</code>\n"
+                            f"С этого момента бот будет отслеживать новые вакансии относительно неё."
+                        )
+                        break
+
+                    if last_newest_url and first_id == last_newest_url:
+                        await self._notify("📭 <b>Новых вакансий нет</b> с момента запуска мониторинга. Завершаем.")
+                        break
+
                 await self._notify(f"📋 Found <b>{len(cards)}</b> vacancies on page {page_num + 1}")
 
+                boundary_reached = False
                 for i, card in enumerate(cards):
                     if self._check_stop():
                         break
 
                     await self._check_pause()
                     if self._check_stop():
+                        break
+
+                    card_id = extract_vacancy_id(card.get("url", ""))
+
+                    if last_newest_url and card_id == last_newest_url:
+                        await self._notify("🏁 <b>Достигнута граница ранее обработанных вакансий.</b> Завершаем.")
+                        boundary_reached = True
                         break
 
                     allowed, reason = await anti_fraud.check_rate_limits()
@@ -651,7 +702,7 @@ class Scheduler:
                     finally:
                         await vacancy_lock_manager.release(card.get("url", ""))
 
-                if self._check_stop():
+                if boundary_reached or self._check_stop():
                     break
 
                 if page_num < config.max_pages - 1:
@@ -663,6 +714,10 @@ class Scheduler:
             logger.error(f"Scheduler error: {e}", exc_info=True)
             await self._notify(f"Error: {e}")
         finally:
+            if flow_id and new_boundary_url:
+                await db.set_setting(f"last_newest_vacancy_{flow_id}", new_boundary_url)
+                logger.info(f"Saved new newest vacancy url boundary for flow {flow_id}: {new_boundary_url}")
+
             if context:
                 try:
                     await context.close()
@@ -734,6 +789,47 @@ async def monitoring_daemon_loop() -> None:
                 flow = await get_active_flow()
                 if not flow:
                     continue
+
+                # 1. Check Prime Time and Timezone
+                prime_time = await db.get_setting("monitoring_prime_time", "24/7")
+                if prime_time != "24/7":
+                    tz_offset = int(await db.get_setting("monitoring_timezone_offset", "3"))
+                    # Calculate current hour in user's timezone
+                    from datetime import datetime, timedelta, timezone
+                    import re
+                    user_time = datetime.now(timezone.utc) + timedelta(hours=tz_offset)
+                    current_hour = user_time.hour
+                    
+                    # Parse prime_time format, e.g. "08:00 - 20:00"
+                    match = re.search(r"(\d{2}):\d{2}\s*-\s*(\d{2}):\d{2}", prime_time)
+                    if match:
+                        start_h = int(match.group(1))
+                        end_h = int(match.group(2))
+                        # Check if inside range (handles overnight intervals like 22:00 - 06:00 too!)
+                        is_inside = False
+                        if start_h <= end_h:
+                            is_inside = start_h <= current_hour < end_h
+                        else:
+                            is_inside = current_hour >= start_h or current_hour < end_h
+                            
+                        if not is_inside:
+                            logger.info(f"Monitoring skipped: current hour {current_hour:02d}:00 is outside prime time ({prime_time})")
+                            continue
+
+                # 2. Handle Jitter (Random delay before starting)
+                jitter = int(await db.get_setting("monitoring_jitter", "0"))
+                if jitter > 0:
+                    import random
+                    delay_secs = random.randint(0, jitter * 60)
+                    logger.info(f"Jitter delay: sleeping for {delay_secs} seconds before starting monitoring run")
+                    # Check enabled status while sleeping in jitter
+                    for _ in range(delay_secs // 5):
+                        await asyncio.sleep(5)
+                        enabled = (await db.get_setting("monitoring_mode", "false")) == "true"
+                        if not enabled:
+                            break
+                    if not enabled:
+                        continue
                 
                 logger.info("Monitoring daemon: triggering active flow apply")
                 await monitoring_scheduler.start()
@@ -742,8 +838,10 @@ async def monitoring_daemon_loop() -> None:
                 while monitoring_scheduler._run_state == RunState.RUNNING:
                     await asyncio.sleep(5)
                 
-                logger.info("Monitoring daemon run completed. Sleeping for 30 minutes.")
-                for _ in range(180):
+                interval_mins = int(await db.get_setting("monitoring_interval", "30"))
+                logger.info(f"Monitoring daemon run completed. Sleeping for {interval_mins} minutes.")
+                # Loop interval_mins * 6 times with 10s sleep to check enabling status frequently
+                for _ in range(interval_mins * 6):
                     await asyncio.sleep(10)
                     enabled = (await db.get_setting("monitoring_mode", "false")) == "true"
                     if not enabled:
