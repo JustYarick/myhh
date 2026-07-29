@@ -225,3 +225,38 @@ async def reset_limits_message(message: Message) -> None:
         logger.error(f"Failed to reset limits: {e}")
         await message.answer(f"❌ Не удалось сбросить лимиты: {e}")
 
+
+@settings_router.message(F.text.startswith("🔍 Мониторинг:"))
+async def toggle_monitoring_message(message: Message) -> None:
+    if not await _check_access(message.from_user.id):
+        return
+    current = (await get_setting("monitoring_mode", "false")) == "true"
+    new_val = "false" if current else "true"
+    await set_setting("monitoring_mode", new_val)
+    
+    monitoring_enabled = new_val == "true"
+    monitoring_status = "ВКЛЮЧЕН" if monitoring_enabled else "ВЫКЛЮЧЕН"
+    
+    from ...services.hh_auth import hh_auth
+    from ..keyboards import settings_reply_keyboard
+    gemini_model = await get_setting("gemini_model", "gemini-2.0-flash")
+    hh_ok = hh_auth.session_exists()
+    hh_status = "Linked" if hh_ok else "Not linked"
+    
+    text = (
+        f"⚙️ <b>Global Settings</b>\n\n"
+        f"🤖 Gemini model: <code>{gemini_model}</code>\n"
+        f"🔑 HH Account: <b>{hh_status}</b>\n"
+        f"🔍 Фоновый мониторинг: <b>{monitoring_status}</b> (каждые 30 минут)"
+    )
+    
+    await message.answer(
+        f"🔍 Режим мониторинга теперь: <b>{monitoring_status}</b>.",
+        parse_mode="HTML"
+    )
+    await message.answer(
+        text,
+        parse_mode="HTML",
+        reply_markup=settings_reply_keyboard(hh_ok, monitoring_enabled),
+    )
+

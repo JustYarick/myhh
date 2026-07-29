@@ -225,6 +225,10 @@ class HHSearchService:
         url: str = "",
         existing_page: Optional[Page] = None,
     ) -> tuple[Optional[Page], list[dict], Optional[object]]:
+        if "order_by=" not in url:
+            sep = "&" if "?" in url else "?"
+            url = f"{url}{sep}order_by=publication_time"
+
         if "page=" not in url:
             sep = "&" if "?" in url else "?"
             url = f"{url}{sep}page={page_num}"

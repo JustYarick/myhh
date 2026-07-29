@@ -16,7 +16,7 @@ def main_menu_reply_keyboard(run_state: str = "idle") -> ReplyKeyboardMarkup:
     keyboard = [
         controls,
         [KeyboardButton(text="📂 Flows"), KeyboardButton(text="📊 Stats")],
-        [KeyboardButton(text="📜 History"), KeyboardButton(text="⚙️ Settings")]
+        [KeyboardButton(text="📜 History"), KeyboardButton(text="📝 Вопросы"), KeyboardButton(text="⚙️ Settings")]
     ]
     return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
 
@@ -216,11 +216,13 @@ def model_list_keyboard(models: list[dict], current_model: str) -> InlineKeyboar
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def settings_reply_keyboard(hh_linked: bool) -> ReplyKeyboardMarkup:
+def settings_reply_keyboard(hh_linked: bool, monitoring_enabled: bool = False) -> ReplyKeyboardMarkup:
     hh_button = KeyboardButton(text="🔓 Logout HH") if hh_linked else KeyboardButton(text="🔑 Login HH")
+    monitoring_text = "🔍 Мониторинг: [ВКЛ]" if monitoring_enabled else "🔍 Мониторинг: [ВЫКЛ]"
     keyboard = [
         [KeyboardButton(text="🤖 Choose Gemini Model"), hh_button],
-        [KeyboardButton(text="🔔 Notifications"), KeyboardButton(text="🧹 Clear Cache"), KeyboardButton(text="🔄 Сбросить лимиты")],
+        [KeyboardButton(text="🔔 Notifications"), KeyboardButton(text=monitoring_text)],
+        [KeyboardButton(text="🧹 Clear Cache"), KeyboardButton(text="🔄 Сбросить лимиты")],
         [KeyboardButton(text="⬅️ Back to Main Menu")]
     ]
     return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
@@ -286,47 +288,47 @@ def flows_reply_keyboard(flows: list, active_flow_id: int | None) -> ReplyKeyboa
     return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
 
 
-def flow_detail_reply_keyboard(flow_id: int, is_active: bool) -> ReplyKeyboardMarkup:
+def flow_detail_reply_keyboard(is_active: bool) -> ReplyKeyboardMarkup:
     keyboard = []
     if not is_active:
-        keyboard.append([KeyboardButton(text=f"🟢 Activate Flow {flow_id}")])
+        keyboard.append([KeyboardButton(text="🟢 Activate Flow")])
     keyboard.append([
-        KeyboardButton(text=f"⚙️ Edit Flow {flow_id}"),
-        KeyboardButton(text=f"🧪 Test Run Flow {flow_id}"),
+        KeyboardButton(text="⚙️ Edit Flow"),
+        KeyboardButton(text="🧪 Test Run Flow"),
     ])
     keyboard.append([
-        KeyboardButton(text=f"❌ Delete Flow {flow_id}"),
+        KeyboardButton(text="❌ Delete Flow"),
         KeyboardButton(text="📂 Back to Flows"),
     ])
     return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
 
 
-def flow_edit_reply_keyboard(flow_id: int) -> ReplyKeyboardMarkup:
+def flow_edit_reply_keyboard() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(keyboard=[
         [
-            KeyboardButton(text=f"🔍 Set Search URL {flow_id}"),
-            KeyboardButton(text=f"👤 Set Resume {flow_id}"),
+            KeyboardButton(text="🔍 Set Search URL"),
+            KeyboardButton(text="👤 Set Resume"),
         ],
         [
-            KeyboardButton(text=f"🎯 Target Applies {flow_id}"),
-            KeyboardButton(text=f"⏱ Daily Limit {flow_id}"),
-            KeyboardButton(text=f"⏱ Hourly Limit {flow_id}"),
+            KeyboardButton(text="🎯 Target Applies"),
+            KeyboardButton(text="⏱ Daily Limit"),
+            KeyboardButton(text="⏱ Hourly Limit"),
         ],
         [
-            KeyboardButton(text=f"⏳ Min Delay {flow_id}"),
-            KeyboardButton(text=f"⏳ Max Delay {flow_id}"),
+            KeyboardButton(text="⏳ Min Delay"),
+            KeyboardButton(text="⏳ Max Delay"),
         ],
         [
-            KeyboardButton(text=f"📝 Edit Prompts {flow_id}"),
+            KeyboardButton(text="📝 Edit Prompts"),
             KeyboardButton(text="📂 Back to Flows"),
         ]
     ], resize_keyboard=True)
 
 
-def flow_prompts_reply_keyboard(flow_id: int) -> ReplyKeyboardMarkup:
+def flow_prompts_reply_keyboard() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(keyboard=[
-        [KeyboardButton(text=f"📝 Cover Letter Prompt {flow_id}")],
-        [KeyboardButton(text=f"📝 Analysis Prompt {flow_id}")],
-        [KeyboardButton(text=f"⚙️ Edit Flow {flow_id}")]
+        [KeyboardButton(text="📝 Cover Letter Prompt")],
+        [KeyboardButton(text="📝 Analysis Prompt")],
+        [KeyboardButton(text="⚙️ Edit Flow")]
     ], resize_keyboard=True)
 

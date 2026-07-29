@@ -24,7 +24,7 @@ async def _error_reply(message, text: str) -> None:
 
 async def _main_menu_message(message) -> None:
     from ..keyboards import main_menu_reply_keyboard
-    from ...scheduler import scheduler
+    from ...scheduler import manual_scheduler as scheduler
     run_state = scheduler._run_state.value
     await message.answer(
         "🤖 <b>AutoHH Bot Menu</b>",
@@ -35,7 +35,7 @@ async def _main_menu_message(message) -> None:
 
 async def _main_menu_callback(callback) -> None:
     from ..keyboards import main_menu_reply_keyboard
-    from ...scheduler import scheduler
+    from ...scheduler import manual_scheduler as scheduler
     run_state = scheduler._run_state.value
     try:
         await callback.message.delete()

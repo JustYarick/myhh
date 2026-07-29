@@ -43,6 +43,26 @@ def check_requires_test(description: str) -> bool:
     return False
 
 
+class VacancyLockManager:
+    def __init__(self) -> None:
+        self._processing_urls: set[str] = set()
+        self._lock = asyncio.Lock()
+
+    async def acquire(self, url: str) -> bool:
+        async with self._lock:
+            if url in self._processing_urls:
+                return False
+            self._processing_urls.add(url)
+            return True
+
+    async def release(self, url: str) -> None:
+        async with self._lock:
+            self._processing_urls.discard(url)
+
+
+vacancy_lock_manager = VacancyLockManager()
+
+
 class RunState(Enum):
     IDLE = "idle"
     RUNNING = "running"
@@ -50,7 +70,8 @@ class RunState(Enum):
 
 
 class Scheduler:
-    def __init__(self) -> None:
+    def __init__(self, name: str = "Scheduler") -> None:
+        self.name = name
         self.state = BotState()
         self._run_state = RunState.IDLE
         self._task: Optional[asyncio.Task] = None
@@ -199,6 +220,10 @@ class Scheduler:
 
         if await db.is_vacancy_cached(card["url"]):
             logger.debug(f"Already processed (cache): {card['title']}")
+            return
+
+        if not await vacancy_lock_manager.acquire(card["url"]):
+            logger.debug(f"Vacancy is already being processed by another runner: {card['title']}")
             return
 
         await self._notify(f"📄 <b>{index + 1}/{total}</b>: {card['title']}...")
@@ -530,10 +555,7 @@ class Scheduler:
 
                 if not cards:
                     await self._notify(f"📭 No vacancies found on page {page_num + 1}")
-                    if context:
-                        await context.close()
-                        context = None
-                    continue
+                    break
 
                 await self._notify(f"📋 Found <b>{len(cards)}</b> vacancies on page {page_num + 1}")
 
@@ -626,6 +648,8 @@ class Scheduler:
                             notify_type="error"
                         )
                         continue
+                    finally:
+                        await vacancy_lock_manager.release(card.get("url", ""))
 
                 if self._check_stop():
                     break
@@ -682,10 +706,56 @@ class Scheduler:
             )
         return "⏹ <b>Stopped</b>"
 
-
 class _CaptchaPause(Exception):
     """Internal signal used to break out of the card loop on captcha."""
     pass
 
 
-scheduler = Scheduler()
+manual_scheduler = Scheduler(name="Manual")
+monitoring_scheduler = Scheduler(name="Monitoring")
+
+monitoring_daemon_task: Optional[asyncio.Task] = None
+
+
+async def monitoring_daemon_loop() -> None:
+    logger.info("Background monitoring daemon loop started")
+    while True:
+        try:
+            await asyncio.sleep(60)  # check conditions every 1 minute
+            enabled = (await db.get_setting("monitoring_mode", "false")) == "true"
+            if not enabled:
+                continue
+            
+            if monitoring_scheduler._run_state == RunState.IDLE:
+                settings = get_settings()
+                if not settings.session_file.exists():
+                    continue
+                
+                flow = await get_active_flow()
+                if not flow:
+                    continue
+                
+                logger.info("Monitoring daemon: triggering active flow apply")
+                await monitoring_scheduler.start()
+                
+                # Wait for it to complete
+                while monitoring_scheduler._run_state == RunState.RUNNING:
+                    await asyncio.sleep(5)
+                
+                logger.info("Monitoring daemon run completed. Sleeping for 30 minutes.")
+                for _ in range(180):
+                    await asyncio.sleep(10)
+                    enabled = (await db.get_setting("monitoring_mode", "false")) == "true"
+                    if not enabled:
+                        break
+        except Exception as e:
+            logger.error(f"Error in monitoring daemon loop: {e}", exc_info=True)
+            await asyncio.sleep(60)
+
+
+def set_notify_callback(callback: Callable[[str], Awaitable[None]]) -> None:
+    global monitoring_daemon_task
+    manual_scheduler.set_notify_callback(callback)
+    monitoring_scheduler.set_notify_callback(callback)
+    if monitoring_daemon_task is None:
+        monitoring_daemon_task = asyncio.create_task(monitoring_daemon_loop())

@@ -77,7 +77,7 @@ async def _on_startup(bot) -> None:
         gemini_service.set_model(saved_model)
         logger.info(f"Gemini model: {saved_model}")
 
-    from .scheduler import scheduler
+    from .scheduler import set_notify_callback
 
     async def notify_callback(message: str) -> None:
         for uid in settings.allowed_user_ids:
@@ -90,7 +90,7 @@ async def _on_startup(bot) -> None:
         for uid in settings.allowed_user_ids:
             await send_error_alert(uid, message)
 
-    scheduler.set_notify_callback(notify_callback)
+    set_notify_callback(notify_callback)
 
     me = await bot.get_me()
     logger.info(f"Bot connected: @{me.username}")

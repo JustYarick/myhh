@@ -4,7 +4,7 @@ from aiogram.types import Message, CallbackQuery
 from aiogram.filters import Command
 
 from ... import database as db
-from ...scheduler import scheduler
+from ...scheduler import manual_scheduler as scheduler
 from ..formatting import bold, italic, code, divider, status_emoji
 
 logger = logging.getLogger(__name__)
@@ -276,25 +276,44 @@ async def history_message(message: Message) -> None:
     await message.answer(text, parse_mode="HTML")
 
 
+@common_router.message(F.text == "📝 Вопросы")
+async def vacancies_with_questions_message(message: Message) -> None:
+    if not await _check_access(message.from_user.id):
+        return
+    vacancies = await db.get_vacancies_with_questions(15)
+    if not vacancies:
+        await message.answer("Нет сохраненных вакансий с вопросами.")
+        return
+    
+    lines = ["📝 <b>Вакансии с вопросами (последние 15):</b>\n"]
+    for idx, v in enumerate(vacancies):
+        dt = v["created_at"]
+        lines.append(f"{idx+1}. <a href=\"{v['vacancy_url']}\">{v['title']}</a> @ <i>{v['employer']}</i> ({dt})")
+    
+    await message.answer("\n".join(lines), parse_mode="HTML", disable_web_page_preview=True)
+
+
 @common_router.message(F.text == "⚙️ Settings")
 async def settings_message(message: Message) -> None:
     if not await _check_access(message.from_user.id):
         return
     from ...services.hh_auth import hh_auth
-    from ...services.flow_entity import get_setting
     from ..keyboards import settings_reply_keyboard
-    gemini_model = await get_setting("gemini_model", "gemini-2.0-flash")
+    gemini_model = await db.get_setting("gemini_model", "gemini-2.0-flash")
+    monitoring_enabled = (await db.get_setting("monitoring_mode", "false")) == "true"
     hh_ok = hh_auth.session_exists()
     hh_status = "Linked" if hh_ok else "Not linked"
+    monitoring_status = "ВКЛЮЧЕН" if monitoring_enabled else "ВЫКЛЮЧЕН"
     text = (
         f"⚙️ <b>Global Settings</b>\n\n"
         f"🤖 Gemini model: <code>{gemini_model}</code>\n"
-        f"🔑 HH Account: <b>{hh_status}</b>"
+        f"🔑 HH Account: <b>{hh_status}</b>\n"
+        f"🔍 Фоновый мониторинг: <b>{monitoring_status}</b> (каждые 30 минут)"
     )
     await message.answer(
         text,
         parse_mode="HTML",
-        reply_markup=settings_reply_keyboard(hh_ok),
+        reply_markup=settings_reply_keyboard(hh_ok, monitoring_enabled),
     )
 
 
