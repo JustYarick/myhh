@@ -65,7 +65,7 @@ async def _start_field_edit(message: Message, flow_id: int, field: str, state: F
     await state.set_state(EditFlowState.waiting_for_value)
 
 
-@flows_router.message(F.text == "➕ Create Flow")
+@flows_router.message(F.text.in_({"➕ Create Flow", "➕ Создать Поток"}))
 async def create_flow_message_handler(message: Message, state: FSMContext) -> None:
     if not await _check_access(message.from_user.id):
         return
@@ -73,7 +73,7 @@ async def create_flow_message_handler(message: Message, state: FSMContext) -> No
     await state.set_state(NewFlowState.waiting_for_name)
 
 
-@flows_router.message(F.text == "📂 Back to Flows")
+@flows_router.message(F.text.in_({"📂 Back to Flows", "📂 Назад к Потокам"}))
 async def back_to_flows_message_handler(message: Message) -> None:
     if not await _check_access(message.from_user.id):
         return
@@ -82,7 +82,7 @@ async def back_to_flows_message_handler(message: Message) -> None:
     await message.answer("Ваши потоки:", reply_markup=flows_reply_keyboard(flows, active_id))
 
 
-@flows_router.message(F.text.startswith("📁 Flow: "))
+@flows_router.message(F.text.startswith("📁 Flow: ") | F.text.startswith("📁 Поток: "))
 async def flow_detail_message_handler(message: Message, state: FSMContext) -> None:
     if not await _check_access(message.from_user.id):
         return
@@ -104,7 +104,7 @@ async def flow_detail_message_handler(message: Message, state: FSMContext) -> No
     )
 
 
-@flows_router.message(F.text == "🟢 Activate Flow")
+@flows_router.message(F.text.in_({"🟢 Activate Flow", "🟢 Активировать Поток"}))
 async def flow_activate_message_handler(message: Message, state: FSMContext) -> None:
     if not await _check_access(message.from_user.id):
         return
@@ -123,7 +123,7 @@ async def flow_activate_message_handler(message: Message, state: FSMContext) -> 
     await message.answer("Ваши потоки:", reply_markup=flows_reply_keyboard(flows, flow_id))
 
 
-@flows_router.message(F.text == "🧪 Test Run Flow")
+@flows_router.message(F.text.in_({"🧪 Test Run Flow", "🧪 Тестовый запуск"}))
 async def flow_test_message_handler(message: Message, state: FSMContext) -> None:
     if not await _check_access(message.from_user.id):
         return
@@ -171,7 +171,7 @@ async def flow_test_message_handler(message: Message, state: FSMContext) -> None
         await message.answer(f"❌ Ошибка тест-рана: {e}")
 
 
-@flows_router.message(F.text == "❌ Delete Flow")
+@flows_router.message(F.text.in_({"❌ Delete Flow", "❌ Удалить Поток"}))
 async def flow_delete_message_handler(message: Message, state: FSMContext) -> None:
     if not await _check_access(message.from_user.id):
         return
@@ -188,7 +188,7 @@ async def flow_delete_message_handler(message: Message, state: FSMContext) -> No
     await state.set_state(DeleteFlowState.confirming)
 
 
-@flows_router.message(F.text == "⚙️ Edit Flow")
+@flows_router.message(F.text.in_({"⚙️ Edit Flow", "⚙️ Редактировать Поток", "⚙️ Назад к Потоку"}))
 async def flow_edit_message_handler(message: Message, state: FSMContext) -> None:
     if not await _check_access(message.from_user.id):
         return
@@ -208,7 +208,7 @@ async def flow_edit_message_handler(message: Message, state: FSMContext) -> None
     )
 
 
-@flows_router.message(F.text == "📝 Edit Prompts")
+@flows_router.message(F.text.in_({"📝 Edit Prompts", "📝 Редактировать промпты"}))
 async def flow_edit_prompts_message_handler(message: Message, state: FSMContext) -> None:
     if not await _check_access(message.from_user.id):
         return
@@ -224,14 +224,14 @@ async def flow_edit_prompts_message_handler(message: Message, state: FSMContext)
     )
 
 
-@flows_router.message(F.text == "🔍 Set Search URL")
+@flows_router.message(F.text.in_({"🔍 Set Search URL", "🔍 Настроить ссылку поиска"}))
 async def flow_set_search_url_message_handler(message: Message, state: FSMContext) -> None:
     data = await state.get_data()
     flow_id = data.get("flow_id")
     await _start_field_edit(message, flow_id, "search_url", state)
 
 
-@flows_router.message(F.text == "👤 Set Resume")
+@flows_router.message(F.text.in_({"👤 Set Resume", "👤 Выбрать резюме"}))
 async def flow_set_resume_message_handler(message: Message, state: FSMContext) -> None:
     data = await state.get_data()
     flow_id = data.get("flow_id")
@@ -251,49 +251,49 @@ async def flow_set_resume_message_handler(message: Message, state: FSMContext) -
         await message.answer(f"❌ Не удалось получить резюме: {e}. Пожалуйста, убедитесь, что вы вошли в аккаунт HH.")
 
 
-@flows_router.message(F.text == "🎯 Target Applies")
+@flows_router.message(F.text.in_({"🎯 Target Applies", "🎯 Цель откликов за запуск"}))
 async def flow_target_applies_message_handler(message: Message, state: FSMContext) -> None:
     data = await state.get_data()
     flow_id = data.get("flow_id")
     await _start_field_edit(message, flow_id, "target_applies", state)
 
 
-@flows_router.message(F.text == "⏱ Daily Limit")
+@flows_router.message(F.text.in_({"⏱ Daily Limit", "⏱ Суточный лимит"}))
 async def flow_daily_limit_message_handler(message: Message, state: FSMContext) -> None:
     data = await state.get_data()
     flow_id = data.get("flow_id")
     await _start_field_edit(message, flow_id, "max_apps_per_day", state)
 
 
-@flows_router.message(F.text == "⏱ Hourly Limit")
+@flows_router.message(F.text.in_({"⏱ Hourly Limit", "⏱ Часовой лимит"}))
 async def flow_hourly_limit_message_handler(message: Message, state: FSMContext) -> None:
     data = await state.get_data()
     flow_id = data.get("flow_id")
     await _start_field_edit(message, flow_id, "max_apps_per_hour", state)
 
 
-@flows_router.message(F.text == "⏳ Min Delay")
+@flows_router.message(F.text.in_({"⏳ Min Delay", "⏳ Мин. задержка"}))
 async def flow_min_delay_message_handler(message: Message, state: FSMContext) -> None:
     data = await state.get_data()
     flow_id = data.get("flow_id")
     await _start_field_edit(message, flow_id, "delay_min", state)
 
 
-@flows_router.message(F.text == "⏳ Max Delay")
+@flows_router.message(F.text.in_({"⏳ Max Delay", "⏳ Макс. задержка"}))
 async def flow_max_delay_message_handler(message: Message, state: FSMContext) -> None:
     data = await state.get_data()
     flow_id = data.get("flow_id")
     await _start_field_edit(message, flow_id, "delay_max", state)
 
 
-@flows_router.message(F.text == "📝 Cover Letter Prompt")
+@flows_router.message(F.text.in_({"📝 Cover Letter Prompt", "📝 Промпт сопроводительного"}))
 async def flow_cover_prompt_message_handler(message: Message, state: FSMContext) -> None:
     data = await state.get_data()
     flow_id = data.get("flow_id")
     await _start_field_edit(message, flow_id, "cover_letter_prompt", state)
 
 
-@flows_router.message(F.text == "📝 Analysis Prompt")
+@flows_router.message(F.text.in_({"📝 Analysis Prompt", "📝 Промпт анализа вакансии"}))
 async def flow_analysis_prompt_message_handler(message: Message, state: FSMContext) -> None:
     data = await state.get_data()
     flow_id = data.get("flow_id")

@@ -8,23 +8,23 @@ def main_menu_reply_keyboard() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(keyboard=[
         [KeyboardButton(text="🔴 Ручной режим"), KeyboardButton(text="🔍 Мониторинг")],
         [KeyboardButton(text="📝 Вопросы"), KeyboardButton(text="📜 История")],
-        [KeyboardButton(text="ℹ️ Status & Info"), KeyboardButton(text="⚙️ Settings")]
+        [KeyboardButton(text="ℹ️ Статус и Инфо"), KeyboardButton(text="⚙️ Настройки")]
     ], resize_keyboard=True)
 
 
 def manual_mode_reply_keyboard(run_state: str = "idle") -> ReplyKeyboardMarkup:
     controls = []
     if run_state == "running":
-        controls = [KeyboardButton(text="⏸ Pause"), KeyboardButton(text="⏹ Stop")]
+        controls = [KeyboardButton(text="⏸ Пауза"), KeyboardButton(text="⏹ Стоп")]
     elif run_state == "paused":
-        controls = [KeyboardButton(text="▶️ Resume"), KeyboardButton(text="⏹ Stop")]
+        controls = [KeyboardButton(text="▶️ Продолжить"), KeyboardButton(text="⏹ Стоп")]
     else:
-        controls = [KeyboardButton(text="▶️ Run Manual")]
+        controls = [KeyboardButton(text="▶️ Запуск")]
 
     return ReplyKeyboardMarkup(keyboard=[
         controls,
-        [KeyboardButton(text="📂 Flows"), KeyboardButton(text="📊 Stats")],
-        [KeyboardButton(text="⬅️ Back to Main Menu")]
+        [KeyboardButton(text="📂 Потоки"), KeyboardButton(text="📊 Статистика")],
+        [KeyboardButton(text="⬅️ Главное меню")]
     ], resize_keyboard=True)
 
 
@@ -35,9 +35,9 @@ def monitoring_mode_reply_keyboard(enabled: bool, interval: int = 30, jitter: in
     return ReplyKeyboardMarkup(keyboard=[
         [toggle_btn],
         [KeyboardButton(text=f"⏱ Интервал: {interval}м"), KeyboardButton(text=jitter_text)],
-        [KeyboardButton(text=pt_text), KeyboardButton(text="📂 Flows")],
-        [KeyboardButton(text="📊 Stats"), KeyboardButton(text="📜 History")],
-        [KeyboardButton(text="⬅️ Back to Main Menu")]
+        [KeyboardButton(text=pt_text), KeyboardButton(text="📂 Потоки")],
+        [KeyboardButton(text="📊 Статистика"), KeyboardButton(text="📜 История")],
+        [KeyboardButton(text="⬅️ Главное меню")]
     ], resize_keyboard=True)
 
 
@@ -197,32 +197,32 @@ def confirm_logout_keyboard() -> InlineKeyboardMarkup:
 
 def stats_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="Today", callback_data="stats_today")],
-        [InlineKeyboardButton(text="Last 7 Days", callback_data="stats_week")],
-        [InlineKeyboardButton(text="Back", callback_data="main_menu")],
+        [InlineKeyboardButton(text="Сегодня", callback_data="stats_today")],
+        [InlineKeyboardButton(text="За 7 дней", callback_data="stats_week")],
+        [InlineKeyboardButton(text="Назад", callback_data="main_menu")],
     ])
 
 
 def cancel_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="Cancel", callback_data="cancel_action")]
+        [InlineKeyboardButton(text="Отмена", callback_data="cancel_action")]
     ])
 
 
 def back_keyboard(callback_data: str = "main_menu") -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="Back", callback_data=callback_data)]
+        [InlineKeyboardButton(text="Назад", callback_data=callback_data)]
     ])
 
 
 def settings_keyboard(gemini_model: str, hh_linked: bool, tz_offset: int = 3) -> InlineKeyboardMarkup:
-    hh_status = "Linked" if hh_linked else "Not linked"
+    hh_status = "Подключен" if hh_linked else "Не подключен"
     tz_label = f"🌐 Часовой пояс: UTC{'+' if tz_offset >= 0 else ''}{tz_offset}"
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=f"Gemini model: {gemini_model}", callback_data="settings_model")],
-        [InlineKeyboardButton(text=f"HH Account: {hh_status}", callback_data="settings_hh")],
+        [InlineKeyboardButton(text=f"Модель Gemini: {gemini_model}", callback_data="settings_model")],
+        [InlineKeyboardButton(text=f"Аккаунт HH.ru: {hh_status}", callback_data="settings_hh")],
         [InlineKeyboardButton(text=tz_label, callback_data="settings_tz")],
-        [InlineKeyboardButton(text="Back", callback_data="main_menu")],
+        [InlineKeyboardButton(text="Назад", callback_data="main_menu")],
     ])
 
 
@@ -234,40 +234,40 @@ def model_list_keyboard(models: list[dict], current_model: str) -> InlineKeyboar
             text=f"{marker}{m['display']} ({m['name']})",
             callback_data=f"settings_set_model_{m['name']}",
         )])
-    rows.append([InlineKeyboardButton(text="Back", callback_data="settings")])
+    rows.append([InlineKeyboardButton(text="Назад", callback_data="settings")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def settings_reply_keyboard(hh_linked: bool, tz_offset: int = 3) -> ReplyKeyboardMarkup:
-    hh_button = KeyboardButton(text="🔓 Logout HH") if hh_linked else KeyboardButton(text="🔑 Login HH")
+    hh_button = KeyboardButton(text="🔓 Выйти из HH") if hh_linked else KeyboardButton(text="🔑 Войти в HH")
     tz_button = KeyboardButton(text=f"🌐 Часовой пояс: UTC{'+' if tz_offset >= 0 else ''}{tz_offset}")
     keyboard = [
-        [KeyboardButton(text="🤖 Choose Gemini Model"), hh_button],
-        [tz_button, KeyboardButton(text="🔔 Notifications")],
-        [KeyboardButton(text="🧹 Clear Cache"), KeyboardButton(text="🔄 Сбросить лимиты")],
-        [KeyboardButton(text="⬅️ Back to Main Menu")]
+        [KeyboardButton(text="🤖 Выбрать модель Gemini"), hh_button],
+        [tz_button, KeyboardButton(text="🔔 Уведомления")],
+        [KeyboardButton(text="🧹 Очистить кэш"), KeyboardButton(text="🔄 Сбросить лимиты")],
+        [KeyboardButton(text="⬅️ Главное меню")]
     ]
     return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
 
 
 def notifications_keyboard(success: bool, error: bool, skip: bool) -> InlineKeyboardMarkup:
     btn_success = InlineKeyboardButton(
-        text=f"🟢 Success Applies: {'ON' if success else 'OFF'}",
+        text=f"🟢 Успешные отклики: {'ВКЛ' if success else 'ВЫКЛ'}",
         callback_data="toggle_notify_success"
     )
     btn_error = InlineKeyboardButton(
-        text=f"🔴 Errors & Captchas: {'ON' if error else 'OFF'}",
+        text=f"🔴 Ошибки и капчи: {'ВКЛ' if error else 'ВЫКЛ'}",
         callback_data="toggle_notify_error"
     )
     btn_skip = InlineKeyboardButton(
-        text=f"🟡 Skip Vacancies: {'ON' if skip else 'OFF'}",
+        text=f"🟡 Пропуски вакансий: {'ВКЛ' if skip else 'ВЫКЛ'}",
         callback_data="toggle_notify_skip"
     )
     return InlineKeyboardMarkup(inline_keyboard=[
         [btn_success],
         [btn_error],
         [btn_skip],
-        [InlineKeyboardButton(text="Back", callback_data="settings")]
+        [InlineKeyboardButton(text="Назад", callback_data="settings")]
     ])
 
 
@@ -276,25 +276,25 @@ def models_reply_keyboard(models: list[dict], current_model: str) -> ReplyKeyboa
     row = []
     for m in models:
         marker = "⭐ " if m["name"] == current_model else ""
-        row.append(KeyboardButton(text=f"Model: {marker}{m['name']}"))
+        row.append(KeyboardButton(text=f"Модель: {marker}{m['name']}"))
         if len(row) == 2:
             keyboard.append(row)
             row = []
     if row:
         keyboard.append(row)
-    keyboard.append([KeyboardButton(text="⬅️ Back to Settings")])
+    keyboard.append([KeyboardButton(text="⬅️ Назад в Настройки")])
     return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
 
 
 def cancel_login_reply_keyboard() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(keyboard=[
-        [KeyboardButton(text="❌ Cancel Login")]
+        [KeyboardButton(text="❌ Отменить Вход")]
     ], resize_keyboard=True)
 
 
 def confirm_logout_reply_keyboard() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(keyboard=[
-        [KeyboardButton(text="⚠️ Confirm Logout"), KeyboardButton(text="⬅️ Back to Settings")]
+        [KeyboardButton(text="⚠️ Подтвердить Выход"), KeyboardButton(text="⬅️ Назад в Настройки")]
     ], resize_keyboard=True)
 
 
@@ -302,10 +302,10 @@ def flows_reply_keyboard(flows: list, active_flow_id: int | None) -> ReplyKeyboa
     keyboard = []
     for f in flows:
         marker = "🟢 " if f.id == active_flow_id else "⚪ "
-        keyboard.append([KeyboardButton(text=f"📁 Flow: {marker}{f.name} (ID: {f.id})")])
+        keyboard.append([KeyboardButton(text=f"📁 Поток: {marker}{f.name} (ID: {f.id})")])
     keyboard.append([
-        KeyboardButton(text="➕ Create Flow"),
-        KeyboardButton(text="⬅️ Back to Main Menu")
+        KeyboardButton(text="➕ Создать Поток"),
+        KeyboardButton(text="⬅️ Главное меню")
     ])
     return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
 
@@ -313,14 +313,14 @@ def flows_reply_keyboard(flows: list, active_flow_id: int | None) -> ReplyKeyboa
 def flow_detail_reply_keyboard(is_active: bool) -> ReplyKeyboardMarkup:
     keyboard = []
     if not is_active:
-        keyboard.append([KeyboardButton(text="🟢 Activate Flow")])
+        keyboard.append([KeyboardButton(text="🟢 Активировать Поток")])
     keyboard.append([
-        KeyboardButton(text="⚙️ Edit Flow"),
-        KeyboardButton(text="🧪 Test Run Flow"),
+        KeyboardButton(text="⚙️ Редактировать Поток"),
+        KeyboardButton(text="🧪 Тестовый запуск"),
     ])
     keyboard.append([
-        KeyboardButton(text="❌ Delete Flow"),
-        KeyboardButton(text="📂 Back to Flows"),
+        KeyboardButton(text="❌ Удалить Поток"),
+        KeyboardButton(text="📂 Назад к Потокам"),
     ])
     return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
 
@@ -328,30 +328,30 @@ def flow_detail_reply_keyboard(is_active: bool) -> ReplyKeyboardMarkup:
 def flow_edit_reply_keyboard() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(keyboard=[
         [
-            KeyboardButton(text="🔍 Set Search URL"),
-            KeyboardButton(text="👤 Set Resume"),
+            KeyboardButton(text="🔍 Настроить ссылку поиска"),
+            KeyboardButton(text="👤 Выбрать резюме"),
         ],
         [
-            KeyboardButton(text="🎯 Target Applies"),
-            KeyboardButton(text="⏱ Daily Limit"),
-            KeyboardButton(text="⏱ Hourly Limit"),
+            KeyboardButton(text="🎯 Цель откликов за запуск"),
+            KeyboardButton(text="⏱ Суточный лимит"),
+            KeyboardButton(text="⏱ Часовой лимит"),
         ],
         [
-            KeyboardButton(text="⏳ Min Delay"),
-            KeyboardButton(text="⏳ Max Delay"),
+            KeyboardButton(text="⏳ Мин. задержка"),
+            KeyboardButton(text="⏳ Макс. задержка"),
         ],
         [
-            KeyboardButton(text="📝 Edit Prompts"),
-            KeyboardButton(text="📂 Back to Flows"),
+            KeyboardButton(text="📝 Редактировать промпты"),
+            KeyboardButton(text="📂 Назад к Потокам"),
         ]
     ], resize_keyboard=True)
 
 
 def flow_prompts_reply_keyboard() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(keyboard=[
-        [KeyboardButton(text="📝 Cover Letter Prompt")],
-        [KeyboardButton(text="📝 Analysis Prompt")],
-        [KeyboardButton(text="⚙️ Edit Flow")]
+        [KeyboardButton(text="📝 Промпт сопроводительного")],
+        [KeyboardButton(text="📝 Промпт анализа вакансии")],
+        [KeyboardButton(text="⚙️ Назад к Потоку")]
     ], resize_keyboard=True)
 
 
@@ -373,6 +373,6 @@ def timezone_select_keyboard(current: int) -> InlineKeyboardMarkup:
             current_row = []
     if current_row:
         rows.append(current_row)
-    rows.append([InlineKeyboardButton(text="Back", callback_data="settings")])
+    rows.append([InlineKeyboardButton(text="Назад", callback_data="settings")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 

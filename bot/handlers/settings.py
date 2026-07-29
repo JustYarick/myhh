@@ -126,14 +126,14 @@ async def send_global_settings(message: Message) -> None:
     )
 
 
-@settings_router.message(F.text == "⬅️ Back to Settings")
+@settings_router.message(F.text.in_({"⬅️ Back to Settings", "⬅️ Назад в Настройки"}))
 async def back_to_settings_message(message: Message) -> None:
     if not await _check_access(message.from_user.id):
         return
     await send_global_settings(message)
 
 
-@settings_router.message(F.text == "🤖 Choose Gemini Model")
+@settings_router.message(F.text.in_({"🤖 Choose Gemini Model", "🤖 Выбрать модель Gemini"}))
 async def settings_choose_model_message(message: Message) -> None:
     if not await _check_access(message.from_user.id):
         return
@@ -145,43 +145,43 @@ async def settings_choose_model_message(message: Message) -> None:
     gemini_model = await get_setting("gemini_model", "gemini-2.0-flash")
     models = list_models(settings.gemini_api_key)
     if not models:
-        await message.answer("Failed to fetch models. Check API key.")
+        await message.answer("Ошибка получения моделей. Проверьте API-ключ.")
         return
     await message.answer(
-        "<b>Select Gemini Model</b>\n⭐ = current",
+        "<b>Выберите модель Gemini</b>\n⭐ = текущая",
         parse_mode="HTML",
         reply_markup=models_reply_keyboard(models, gemini_model),
     )
 
 
-@settings_router.message(F.text.startswith("Model: "))
+@settings_router.message(F.text.startswith("Model: ") | F.text.startswith("Модель: "))
 async def settings_set_model_message(message: Message) -> None:
     if not await _check_access(message.from_user.id):
         return
-    model = message.text.replace("Model: ", "").replace("⭐ ", "").strip()
+    model = message.text.replace("Model: ", "").replace("Модель: ", "").replace("⭐ ", "").strip()
     from ...services.flow_entity import set_setting
     from ...services.gemini import gemini_service
     await set_setting("gemini_model", model)
     gemini_service.set_model(model)
-    await message.answer(f"✅ Gemini model updated to: <b>{model}</b>", parse_mode="HTML")
+    await message.answer(f"✅ Модель Gemini обновлена на: <b>{model}</b>", parse_mode="HTML")
     await back_to_settings_message(message)
 
 
-@settings_router.message(F.text == "🧹 Clear Cache")
+@settings_router.message(F.text.in_({"🧹 Clear Cache", "🧹 Очистить кэш"}))
 async def clear_cache_message(message: Message) -> None:
     if not await _check_access(message.from_user.id):
         return
     from ... import database as db
     try:
         await db.clear_vacancy_cache()
-        await message.answer("🧹 <b>Vacancy cache cleared successfully!</b>", parse_mode="HTML")
+        await message.answer("🧹 <b>Кэш вакансий успешно очищен!</b>", parse_mode="HTML")
     except Exception as e:
         logger.error(f"Failed to clear cache: {e}")
-        await message.answer(f"❌ Failed to clear cache: {e}")
+        await message.answer(f"❌ Не удалось очистить кэш: {e}")
     await back_to_settings_message(message)
 
 
-@settings_router.message(F.text == "🔔 Notifications")
+@settings_router.message(F.text.in_({"🔔 Notifications", "🔔 Уведомления"}))
 async def notifications_settings_message(message: Message) -> None:
     if not await _check_access(message.from_user.id):
         return

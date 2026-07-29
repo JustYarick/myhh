@@ -243,14 +243,30 @@ async def enable_monitoring_message(message: Message) -> None:
     if not await _check_access(message.from_user.id):
         return
     await db.set_setting("monitoring_mode", "true")
-    
-    # Reset/clear baseline boundary URL so it initializes immediately on the next daemon tick!
     from ...services.flow_entity import get_active_flow_id
     flow_id = await get_active_flow_id()
     if flow_id:
         await db.set_setting(f"last_newest_vacancy_{flow_id}", "")
-
-    await message.answer("✅ Мониторинг вакансий <b>включен</b>. Устанавливаю базовую точку отсчета свежих вакансий...", parse_mode="HTML")
+    prime_time = await db.get_setting("monitoring_prime_time", "24/7")
+    tz_offset = int(await db.get_setting("monitoring_timezone_offset", "3"))
+    is_inside = True
+    from datetime import datetime, timedelta, timezone
+    user_time = datetime.now(timezone.utc) + timedelta(hours=tz_offset)
+    if prime_time != "24/7":
+        import re
+        current_hour = user_time.hour
+        match = re.search(r"(\d{2}):\d{2}\s*-\s*(\d{2}):\d{2}", prime_time)
+        if match:
+            start_h = int(match.group(1))
+            end_h = int(match.group(2))
+            if start_h <= end_h:
+                is_inside = start_h <= current_hour < end_h
+            else:
+                is_inside = current_hour >= start_h or current_hour < end_h
+    if not is_inside:
+        await message.answer(f"✅ Мониторинг вакансий <b>включен</b>.\n💤 Проверки приостановлены: текущее местное время {user_time.strftime('%H:%M')} находится вне рабочего диапазона (<b>{prime_time}</b>, UTC{'+' if tz_offset >= 0 else ''}{tz_offset}).\nБот зафиксирует точку отсчета и начнет обход при наступлении рабочего времени.", parse_mode="HTML")
+    else:
+        await message.answer("✅ Мониторинг вакансий <b>включен</b>. Устанавливаю базовую точку отсчета свежих вакансий...", parse_mode="HTML")
     await _monitoring_menu_message(message)
 
 
@@ -309,7 +325,7 @@ async def disable_monitoring_message(message: Message) -> None:
     await _monitoring_menu_message(message)
 
 
-@common_router.message(F.text == "▶️ Run Manual")
+@common_router.message(F.text.in_({"▶️ Run Manual", "▶️ Запуск"}))
 async def run_message(message: Message) -> None:
     if not await _check_access(message.from_user.id):
         return
@@ -321,7 +337,7 @@ async def run_message(message: Message) -> None:
     await _manual_menu_message(message)
 
 
-@common_router.message(F.text == "⏸ Pause")
+@common_router.message(F.text.in_({"⏸ Pause", "⏸ Пауза"}))
 async def pause_message(message: Message) -> None:
     if not await _check_access(message.from_user.id):
         return
@@ -332,7 +348,7 @@ async def pause_message(message: Message) -> None:
     await _manual_menu_message(message)
 
 
-@common_router.message(F.text == "▶️ Resume")
+@common_router.message(F.text.in_({"▶️ Resume", "▶️ Продолжить"}))
 async def resume_message(message: Message) -> None:
     if not await _check_access(message.from_user.id):
         return
@@ -343,7 +359,7 @@ async def resume_message(message: Message) -> None:
     await _manual_menu_message(message)
 
 
-@common_router.message(F.text == "⏹ Stop")
+@common_router.message(F.text.in_({"⏹ Stop", "⏹ Стоп"}))
 async def stop_message(message: Message) -> None:
     if not await _check_access(message.from_user.id):
         return
@@ -354,7 +370,7 @@ async def stop_message(message: Message) -> None:
     await _manual_menu_message(message)
 
 
-@common_router.message(F.text == "📂 Flows")
+@common_router.message(F.text.in_({"📂 Flows", "📂 Потоки"}))
 async def flows_message(message: Message) -> None:
     if not await _check_access(message.from_user.id):
         return
@@ -364,17 +380,17 @@ async def flows_message(message: Message) -> None:
     active_id = await flow_db.get_active_flow_id()
     if not flows:
         await message.answer(
-            "No flows yet. Create one to start.",
+            "Пока нет потоков. Создайте поток для начала.",
             reply_markup=flows_reply_keyboard([], active_id),
         )
     else:
         await message.answer(
-            "Your flows:",
+            "Ваши потоки:",
             reply_markup=flows_reply_keyboard(flows, active_id),
         )
 
 
-@common_router.message(F.text == "📊 Stats")
+@common_router.message(F.text.in_({"📊 Stats", "📊 Статистика"}))
 async def stats_message(message: Message) -> None:
     if not await _check_access(message.from_user.id):
         return
@@ -388,9 +404,9 @@ async def history_message(message: Message) -> None:
         return
     apps = await db.get_recent_applications(10)
     if not apps:
-        text = "📭 <i>No applications yet.</i>"
+        text = "📭 <i>История откликов пуста.</i>"
     else:
-        lines = ["📜 <b>Recent applications</b>"]
+        lines = ["📜 <b>Последние отклики:</b>"]
         for app in apps:
             icon = status_emoji(app["status"])
             lines.append(
@@ -417,7 +433,7 @@ async def vacancies_with_questions_message(message: Message) -> None:
     await message.answer("\n".join(lines), parse_mode="HTML", disable_web_page_preview=True)
 
 
-@common_router.message(F.text == "⚙️ Settings")
+@common_router.message(F.text.in_({"⚙️ Settings", "⚙️ Настройки"}))
 async def settings_message(message: Message) -> None:
     if not await _check_access(message.from_user.id):
         return
@@ -425,15 +441,15 @@ async def settings_message(message: Message) -> None:
     await send_global_settings(message)
 
 
-@common_router.message(F.text == "⬅️ Back to Main Menu")
-@common_router.message(F.text == "📂 Back to Flows")
+@common_router.message(F.text.in_({"⬅️ Back to Main Menu", "⬅️ Главное меню"}))
+@common_router.message(F.text.in_({"📂 Back to Flows", "📂 Назад к Потокам"}))
 async def back_to_main_menu_message(message: Message) -> None:
     if not await _check_access(message.from_user.id):
         return
     await _main_menu_message(message)
 
 
-@common_router.message(F.text == "ℹ️ Status & Info")
+@common_router.message(F.text.in_({"ℹ️ Status & Info", "ℹ️ Статус и Инфо"}))
 async def global_status_info_message(message: Message) -> None:
     if not await _check_access(message.from_user.id):
         return
@@ -446,7 +462,7 @@ async def global_status_info_message(message: Message) -> None:
     gemini_model = await db.get_setting("gemini_model", "gemini-2.0-flash")
     tz_offset = int(await db.get_setting("monitoring_timezone_offset", "3"))
     hh_ok = hh_auth.session_exists()
-    hh_status = "🟢 Linked" if hh_ok else "🔴 Not linked"
+    hh_status = "🟢 Подключен" if hh_ok else "🔴 Не подключен"
     
     # Local time calculation
     from datetime import datetime, timedelta, timezone
@@ -454,40 +470,40 @@ async def global_status_info_message(message: Message) -> None:
     time_str = user_time.strftime("%H:%M:%S")
     
     # Schedulers state
-    manual_state = "Idle ⏹"
+    manual_state = "Ожидание ⏹"
     if manual_scheduler._run_state == RunState.RUNNING:
-        manual_state = f"Running 🟢 (Page {manual_scheduler.state.current_page}, Processed {manual_scheduler.state.vacancies_processed})"
+        manual_state = f"Запущен 🟢 (Страница {manual_scheduler.state.current_page}, Обработано {manual_scheduler.state.vacancies_processed})"
     elif manual_scheduler._run_state == RunState.PAUSED:
-        manual_state = f"Paused ⏸ (Page {manual_scheduler.state.current_page})"
+        manual_state = f"На паузе ⏸ (Страница {manual_scheduler.state.current_page})"
     
     monitoring_enabled = (await db.get_setting("monitoring_mode", "false")) == "true"
-    monitoring_state = "Disabled 🔴"
+    monitoring_state = "Выключен 🔴"
     if monitoring_enabled:
-        monitoring_run = "Running 🟢" if monitoring_scheduler._run_state == RunState.RUNNING else "Waiting ⏱"
-        monitoring_state = f"Active ({monitoring_run})"
+        monitoring_run = "Сканирование 🟢" if monitoring_scheduler._run_state == RunState.RUNNING else "Ожидание ⏱"
+        monitoring_state = f"Активен ({monitoring_run})"
         
     interval = int(await db.get_setting("monitoring_interval", "30"))
     jitter = int(await db.get_setting("monitoring_jitter", "0"))
     prime_time = await db.get_setting("monitoring_prime_time", "24/7")
     
     active_flow = await get_active_flow()
-    flow_name = active_flow.name if active_flow else "None"
+    flow_name = active_flow.name if active_flow else "Отсутствует"
     
     # Saved boundary
-    boundary_id = "None"
+    boundary_id = "Отсутствует"
     if active_flow:
-        boundary_id = await db.get_setting(f"last_newest_vacancy_{active_flow.id}", "None")
+        boundary_id = await db.get_setting(f"last_newest_vacancy_{active_flow.id}", "Отсутствует")
     
     # Today stats
     stats = await db.get_today_stats()
     
     text = (
-        f"🤖 <b>AutoHH Global Status & Dashboard</b>\n\n"
+        f"🤖 <b>AutoHH: Статус и Системный дашборд</b>\n\n"
         f"⚙️ <b>Системная информация:</b>\n"
         f"• Аккаунт HH.ru: <b>{hh_status}</b>\n"
         f"• Модель ИИ: <code>{gemini_model}</code>\n"
         f"• Активный поток: <b>{flow_name}</b>\n"
-        f"• Время сервера: <code>{time_str}</code> (UTC{'+' if tz_offset >= 0 else ''}{tz_offset})\n\n"
+        f"• Местное время: <code>{time_str}</code> (UTC{'+' if tz_offset >= 0 else ''}{tz_offset})\n\n"
         f"▶️ <b>Ручной режим:</b>\n"
         f"• Статус: <b>{manual_state}</b>\n\n"
         f"🔍 <b>Режим мониторинга:</b>\n"
