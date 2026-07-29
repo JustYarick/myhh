@@ -12,6 +12,15 @@ from ...services.hh_auth import hh_auth
 logger = logging.getLogger(__name__)
 flows_router = Router()
 
+class NewFlowState(StatesGroup):
+    waiting_for_name = State()
+
+class EditFlowState(StatesGroup):
+    waiting_for_value = State()
+
+class DeleteFlowState(StatesGroup):
+    confirming = State()
+
 import re
 from ...services.browser import browser_manager
 from ..keyboards import (
@@ -289,16 +298,7 @@ async def flow_delete_confirm_handler(message: Message, state: FSMContext) -> No
     await message.answer("Ваши потоки:", reply_markup=flows_reply_keyboard(flows, active_id))
 
 
-class NewFlowState(StatesGroup):
-    waiting_for_name = State()
 
-
-class EditFlowState(StatesGroup):
-    waiting_for_value = State()
-
-
-class DeleteFlowState(StatesGroup):
-    confirming = State()
 
 
 async def _check_access(user_id: int) -> bool:
