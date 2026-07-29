@@ -121,6 +121,7 @@ async def is_vacancy_cached(vacancy_url: str, ttl_days: int = 30) -> bool:
         cursor = await db.execute(
             """SELECT 1 FROM vacancy_cache
                WHERE vacancy_url = ?
+               AND result != 'parsed'
                AND processed_at >= datetime('now', ?) LIMIT 1""",
             (vacancy_url, f"-{ttl_days} days"),
         )
