@@ -95,9 +95,15 @@ async def _on_startup(bot) -> None:
     me = await bot.get_me()
     logger.info(f"Bot connected: @{me.username}")
 
+    monitoring_active = (await get_setting("monitoring_mode", "false")) == "true"
+    startup_text = "🤖 <b>AutoHH bot started!</b>"
+    if monitoring_active:
+        startup_text += "\n🔄 <b>Сервер перезапущен.</b> Восстанавливаю фоновый мониторинг вакансий..."
+        logger.warning("System restart detected. Monitoring mode was active, recovering daemon loop.")
+
     for uid in settings.allowed_user_ids:
         try:
-            await bot.send_message(chat_id=uid, text="🤖 <b>AutoHH bot started!</b>", parse_mode="HTML")
+            await bot.send_message(chat_id=uid, text=startup_text, parse_mode="HTML")
             logger.info(f"Sent startup message to {uid}")
         except Exception as e:
             logger.error(f"Failed to notify {uid}: {e}")

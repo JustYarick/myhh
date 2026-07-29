@@ -435,21 +435,8 @@ async def vacancies_with_questions_message(message: Message) -> None:
 async def settings_message(message: Message) -> None:
     if not await _check_access(message.from_user.id):
         return
-    from ...services.hh_auth import hh_auth
-    from ..keyboards import settings_reply_keyboard
-    gemini_model = await db.get_setting("gemini_model", "gemini-2.0-flash")
-    hh_ok = hh_auth.session_exists()
-    hh_status = "Linked" if hh_ok else "Not linked"
-    text = (
-        f"⚙️ <b>Global Settings</b>\n\n"
-        f"🤖 Gemini model: <code>{gemini_model}</code>\n"
-        f"🔑 HH Account: <b>{hh_status}</b>"
-    )
-    await message.answer(
-        text,
-        parse_mode="HTML",
-        reply_markup=settings_reply_keyboard(hh_ok),
-    )
+    from .settings import send_global_settings
+    await send_global_settings(message)
 
 
 @common_router.message(F.text == "⬅️ Back to Main Menu")

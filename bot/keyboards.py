@@ -238,11 +238,13 @@ def model_list_keyboard(models: list[dict], current_model: str) -> InlineKeyboar
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def settings_reply_keyboard(hh_linked: bool) -> ReplyKeyboardMarkup:
+def settings_reply_keyboard(hh_linked: bool, tz_offset: int = 3) -> ReplyKeyboardMarkup:
     hh_button = KeyboardButton(text="🔓 Logout HH") if hh_linked else KeyboardButton(text="🔑 Login HH")
+    tz_button = KeyboardButton(text=f"🌐 Часовой пояс: UTC{'+' if tz_offset >= 0 else ''}{tz_offset}")
     keyboard = [
         [KeyboardButton(text="🤖 Choose Gemini Model"), hh_button],
-        [KeyboardButton(text="🔔 Notifications"), KeyboardButton(text="🧹 Clear Cache"), KeyboardButton(text="🔄 Сбросить лимиты")],
+        [tz_button, KeyboardButton(text="🔔 Notifications")],
+        [KeyboardButton(text="🧹 Clear Cache"), KeyboardButton(text="🔄 Сбросить лимиты")],
         [KeyboardButton(text="⬅️ Back to Main Menu")]
     ]
     return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)

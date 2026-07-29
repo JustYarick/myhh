@@ -790,6 +790,8 @@ async def monitoring_daemon_loop() -> None:
                 if not flow:
                     continue
 
+                last_newest_url = await db.get_setting(f"last_newest_vacancy_{flow.id}", "")
+
                 # 1. Check Prime Time and Timezone
                 prime_time = await db.get_setting("monitoring_prime_time", "24/7")
                 if prime_time != "24/7":
@@ -817,8 +819,9 @@ async def monitoring_daemon_loop() -> None:
                             continue
 
                 # 2. Handle Jitter (Random delay before starting)
+                # Skip Jitter delay entirely if there is no baseline set yet (so baseline is established immediately)
                 jitter = int(await db.get_setting("monitoring_jitter", "0"))
-                if jitter > 0:
+                if jitter > 0 and last_newest_url:
                     import random
                     delay_secs = random.randint(0, jitter * 60)
                     logger.info(f"Jitter delay: sleeping for {delay_secs} seconds before starting monitoring run")

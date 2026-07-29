@@ -106,25 +106,31 @@ async def settings_hh_callback(callback: CallbackQuery) -> None:
     )
 
 
-@settings_router.message(F.text == "⬅️ Back to Settings")
-async def back_to_settings_message(message: Message) -> None:
-    if not await _check_access(message.from_user.id):
-        return
+async def send_global_settings(message: Message) -> None:
     from ...services.flow_entity import get_setting
     from ..keyboards import settings_reply_keyboard
     gemini_model = await get_setting("gemini_model", "gemini-2.0-flash")
+    tz_offset = int(await get_setting("monitoring_timezone_offset", "3"))
     hh_ok = hh_auth.session_exists()
     hh_status = "Linked" if hh_ok else "Not linked"
     text = (
         f"⚙️ <b>Global Settings</b>\n\n"
         f"🤖 Gemini model: <code>{gemini_model}</code>\n"
-        f"🔑 HH Account: <b>{hh_status}</b>"
+        f"🔑 HH Account: <b>{hh_status}</b>\n"
+        f"🌐 Часовой пояс: <b>UTC{'+' if tz_offset >= 0 else ''}{tz_offset}</b>"
     )
     await message.answer(
         text,
         parse_mode="HTML",
-        reply_markup=settings_reply_keyboard(hh_ok),
+        reply_markup=settings_reply_keyboard(hh_ok, tz_offset=tz_offset),
     )
+
+
+@settings_router.message(F.text == "⬅️ Back to Settings")
+async def back_to_settings_message(message: Message) -> None:
+    if not await _check_access(message.from_user.id):
+        return
+    await send_global_settings(message)
 
 
 @settings_router.message(F.text == "🤖 Choose Gemini Model")
@@ -242,6 +248,7 @@ async def toggle_monitoring_message(message: Message) -> None:
     from ...services.hh_auth import hh_auth
     from ..keyboards import settings_reply_keyboard
     gemini_model = await get_setting("gemini_model", "gemini-2.0-flash")
+    tz_offset = int(await get_setting("monitoring_timezone_offset", "3"))
     hh_ok = hh_auth.session_exists()
     hh_status = "Linked" if hh_ok else "Not linked"
     
@@ -249,7 +256,8 @@ async def toggle_monitoring_message(message: Message) -> None:
         f"⚙️ <b>Global Settings</b>\n\n"
         f"🤖 Gemini model: <code>{gemini_model}</code>\n"
         f"🔑 HH Account: <b>{hh_status}</b>\n"
-        f"🔍 Фоновый мониторинг: <b>{monitoring_status}</b> (каждые 30 минут)"
+        f"🔍 Фоновый мониторинг: <b>{monitoring_status}</b> (каждые 30 минут)\n"
+        f"🌐 Часовой пояс: <b>UTC{'+' if tz_offset >= 0 else ''}{tz_offset}</b>"
     )
     
     await message.answer(
@@ -259,7 +267,7 @@ async def toggle_monitoring_message(message: Message) -> None:
     await message.answer(
         text,
         parse_mode="HTML",
-        reply_markup=settings_reply_keyboard(hh_ok, monitoring_enabled),
+        reply_markup=settings_reply_keyboard(hh_ok, tz_offset=tz_offset),
     )
 
 
@@ -284,5 +292,37 @@ async def settings_tz_callback(callback: CallbackQuery) -> None:
         "<b>Global Settings</b>",
         parse_mode="HTML",
         reply_markup=settings_keyboard(gemini_model, hh_ok, tz_offset=new_val),
+    )
+
+
+@settings_router.message(F.text.startswith("🌐 Часовой пояс:"))
+async def settings_timezone_message_handler(message: Message) -> None:
+    if not await _check_access(message.from_user.id):
+        return
+    from ...services.flow_entity import get_setting, set_setting
+    current = int(await get_setting("monitoring_timezone_offset", "3"))
+    offsets = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, -11, -10, -9, -8, -7, -6, -5, -4, -3, -2, -1]
+    next_idx = (offsets.index(current) + 1) % len(offsets) if current in offsets else 3
+    new_val = offsets[next_idx]
+    await set_setting("monitoring_timezone_offset", str(new_val))
+    
+    await message.answer(f"🌐 Часовой пояс изменен на: <b>UTC{'+' if new_val >= 0 else ''}{new_val}</b>.", parse_mode="HTML")
+    
+    # Send updated settings view
+    from ..keyboards import settings_reply_keyboard
+    gemini_model = await get_setting("gemini_model", "gemini-2.0-flash")
+    hh_ok = hh_auth.session_exists()
+    hh_status = "Linked" if hh_ok else "Not linked"
+    
+    text = (
+        f"⚙️ <b>Global Settings</b>\n\n"
+        f"🤖 Gemini model: <code>{gemini_model}</code>\n"
+        f"🔑 HH Account: <b>{hh_status}</b>\n"
+        f"🌐 Часовой пояс: <b>UTC{'+' if new_val >= 0 else ''}{new_val}</b>"
+    )
+    await message.answer(
+        text,
+        parse_mode="HTML",
+        reply_markup=settings_reply_keyboard(hh_ok, tz_offset=new_val),
     )
 
