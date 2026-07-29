@@ -447,3 +447,76 @@ async def back_to_main_menu_message(message: Message) -> None:
     await _main_menu_message(message)
 
 
+@common_router.message(F.text == "ℹ️ Status & Info")
+async def global_status_info_message(message: Message) -> None:
+    if not await _check_access(message.from_user.id):
+        return
+    
+    from ...services.hh_auth import hh_auth
+    from ...scheduler import manual_scheduler, monitoring_scheduler, RunState
+    from ...services.flow_entity import get_active_flow
+    
+    # Global settings
+    gemini_model = await db.get_setting("gemini_model", "gemini-2.0-flash")
+    tz_offset = int(await db.get_setting("monitoring_timezone_offset", "3"))
+    hh_ok = hh_auth.session_exists()
+    hh_status = "🟢 Linked" if hh_ok else "🔴 Not linked"
+    
+    # Local time calculation
+    from datetime import datetime, timedelta, timezone
+    user_time = datetime.now(timezone.utc) + timedelta(hours=tz_offset)
+    time_str = user_time.strftime("%H:%M:%S")
+    
+    # Schedulers state
+    manual_state = "Idle ⏹"
+    if manual_scheduler._run_state == RunState.RUNNING:
+        manual_state = f"Running 🟢 (Page {manual_scheduler.state.current_page}, Processed {manual_scheduler.state.vacancies_processed})"
+    elif manual_scheduler._run_state == RunState.PAUSED:
+        manual_state = f"Paused ⏸ (Page {manual_scheduler.state.current_page})"
+    
+    monitoring_enabled = (await db.get_setting("monitoring_mode", "false")) == "true"
+    monitoring_state = "Disabled 🔴"
+    if monitoring_enabled:
+        monitoring_run = "Running 🟢" if monitoring_scheduler._run_state == RunState.RUNNING else "Waiting ⏱"
+        monitoring_state = f"Active ({monitoring_run})"
+        
+    interval = int(await db.get_setting("monitoring_interval", "30"))
+    jitter = int(await db.get_setting("monitoring_jitter", "0"))
+    prime_time = await db.get_setting("monitoring_prime_time", "24/7")
+    
+    active_flow = await get_active_flow()
+    flow_name = active_flow.name if active_flow else "None"
+    
+    # Saved boundary
+    boundary_id = "None"
+    if active_flow:
+        boundary_id = await db.get_setting(f"last_newest_vacancy_{active_flow.id}", "None")
+    
+    # Today stats
+    stats = await db.get_today_stats()
+    
+    text = (
+        f"🤖 <b>AutoHH Global Status & Dashboard</b>\n\n"
+        f"⚙️ <b>Системная информация:</b>\n"
+        f"• Аккаунт HH.ru: <b>{hh_status}</b>\n"
+        f"• Модель ИИ: <code>{gemini_model}</code>\n"
+        f"• Активный поток: <b>{flow_name}</b>\n"
+        f"• Время сервера: <code>{time_str}</code> (UTC{'+' if tz_offset >= 0 else ''}{tz_offset})\n\n"
+        f"▶️ <b>Ручной режим:</b>\n"
+        f"• Статус: <b>{manual_state}</b>\n\n"
+        f"🔍 <b>Режим мониторинга:</b>\n"
+        f"• Статус: <b>{monitoring_state}</b>\n"
+        f"• Интервал: <b>каждые {interval} мин</b>\n"
+        f"• Рандом (Jitter): <b>{jitter if jitter > 0 else 'Выкл'} мин</b>\n"
+        f"• Время работы: <b>{prime_time}</b>\n"
+        f"• Точка отсчета (ID): <code>{boundary_id}</code>\n\n"
+        f"📊 <b>Статистика за сегодня:</b>\n"
+        f"• Обработано всего: <b>{stats['total_applied']}</b>\n"
+        f"• Успешных откликов: <b>{stats['successful']}</b>\n"
+        f"• Пропущено (ИИ/фильтры): <b>{stats['analyzed_skip'] + stats['skipped']}</b>\n"
+        f"• Ошибок: <b>{stats['errors']}</b>"
+    )
+    
+    await message.answer(text, parse_mode="HTML")
+
+
