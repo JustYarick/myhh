@@ -185,7 +185,67 @@ async def status_callback(callback: CallbackQuery) -> None:
 
 # === Reply Keyboard Message Handlers ===
 
-@common_router.message(F.text == "▶️ Run")
+async def _manual_menu_message(message: Message) -> None:
+    from ..keyboards import manual_mode_reply_keyboard
+    run_state = scheduler._run_state.value
+    await message.answer(
+        f"🔴 <b>Ручной режим управления</b>\n\nТекущий статус планировщика: {scheduler.get_status_text()}",
+        parse_mode="HTML",
+        reply_markup=manual_mode_reply_keyboard(run_state)
+    )
+
+
+async def _monitoring_menu_message(message: Message) -> None:
+    from ..keyboards import monitoring_mode_reply_keyboard
+    from ...scheduler import monitoring_scheduler
+    monitoring_enabled = (await db.get_setting("monitoring_mode", "false")) == "true"
+    run_status = "РАБОТАЕТ" if monitoring_scheduler._run_state.value == "running" else "ОЖИДАНИЕ"
+    text = (
+        f"🔍 <b>Режим авто-мониторинга</b>\n\n"
+        f"Фоновый запуск: {'<b>АКТИВЕН</b> 🟢' if monitoring_enabled else '<b>ВЫКЛЮЧЕН</b> 🔴'}\n"
+        f"Текущая сессия поиска: <b>{run_status}</b>\n\n"
+        f"Каждые 30 минут бот сканирует выдачу по дате публикации и откликается на новые подходящие вакансии в фоне."
+    )
+    await message.answer(
+        text,
+        parse_mode="HTML",
+        reply_markup=monitoring_mode_reply_keyboard(monitoring_enabled)
+    )
+
+
+@common_router.message(F.text == "🔴 Ручной режим")
+async def manual_mode_message(message: Message) -> None:
+    if not await _check_access(message.from_user.id):
+        return
+    await _manual_menu_message(message)
+
+
+@common_router.message(F.text == "🔍 Мониторинг")
+async def monitoring_mode_message(message: Message) -> None:
+    if not await _check_access(message.from_user.id):
+        return
+    await _monitoring_menu_message(message)
+
+
+@common_router.message(F.text == "🟢 Включить авто-поиск")
+async def enable_monitoring_message(message: Message) -> None:
+    if not await _check_access(message.from_user.id):
+        return
+    await db.set_setting("monitoring_mode", "true")
+    await message.answer("✅ Авто-поиск вакансий по расписанию <b>включен</b> (каждые 30 минут).", parse_mode="HTML")
+    await _monitoring_menu_message(message)
+
+
+@common_router.message(F.text == "🔴 Выключить авто-поиск")
+async def disable_monitoring_message(message: Message) -> None:
+    if not await _check_access(message.from_user.id):
+        return
+    await db.set_setting("monitoring_mode", "false")
+    await message.answer("❌ Авто-поиск вакансий по расписанию <b>выключен</b>.", parse_mode="HTML")
+    await _monitoring_menu_message(message)
+
+
+@common_router.message(F.text == "▶️ Run Manual")
 async def run_message(message: Message) -> None:
     if not await _check_access(message.from_user.id):
         return
@@ -194,7 +254,7 @@ async def run_message(message: Message) -> None:
     except Exception as e:
         logger.error(f"Run error: {e}", exc_info=True)
         await message.answer(f"Error: {e}")
-    await _main_menu_message(message)
+    await _manual_menu_message(message)
 
 
 @common_router.message(F.text == "⏸ Pause")
@@ -205,7 +265,7 @@ async def pause_message(message: Message) -> None:
         await scheduler.pause()
     except Exception as e:
         logger.error(f"Pause error: {e}", exc_info=True)
-    await _main_menu_message(message)
+    await _manual_menu_message(message)
 
 
 @common_router.message(F.text == "▶️ Resume")
@@ -216,7 +276,7 @@ async def resume_message(message: Message) -> None:
         await scheduler.resume()
     except Exception as e:
         logger.error(f"Resume error: {e}", exc_info=True)
-    await _main_menu_message(message)
+    await _manual_menu_message(message)
 
 
 @common_router.message(F.text == "⏹ Stop")
@@ -227,7 +287,7 @@ async def stop_message(message: Message) -> None:
         await scheduler.stop()
     except Exception as e:
         logger.error(f"Stop error: {e}", exc_info=True)
-    await _main_menu_message(message)
+    await _manual_menu_message(message)
 
 
 @common_router.message(F.text == "📂 Flows")
@@ -300,24 +360,22 @@ async def settings_message(message: Message) -> None:
     from ...services.hh_auth import hh_auth
     from ..keyboards import settings_reply_keyboard
     gemini_model = await db.get_setting("gemini_model", "gemini-2.0-flash")
-    monitoring_enabled = (await db.get_setting("monitoring_mode", "false")) == "true"
     hh_ok = hh_auth.session_exists()
     hh_status = "Linked" if hh_ok else "Not linked"
-    monitoring_status = "ВКЛЮЧЕН" if monitoring_enabled else "ВЫКЛЮЧЕН"
     text = (
         f"⚙️ <b>Global Settings</b>\n\n"
         f"🤖 Gemini model: <code>{gemini_model}</code>\n"
-        f"🔑 HH Account: <b>{hh_status}</b>\n"
-        f"🔍 Фоновый мониторинг: <b>{monitoring_status}</b> (каждые 30 минут)"
+        f"🔑 HH Account: <b>{hh_status}</b>"
     )
     await message.answer(
         text,
         parse_mode="HTML",
-        reply_markup=settings_reply_keyboard(hh_ok, monitoring_enabled),
+        reply_markup=settings_reply_keyboard(hh_ok),
     )
 
 
 @common_router.message(F.text == "⬅️ Back to Main Menu")
+@common_router.message(F.text == "📂 Back to Flows")
 async def back_to_main_menu_message(message: Message) -> None:
     if not await _check_access(message.from_user.id):
         return

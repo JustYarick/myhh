@@ -4,21 +4,37 @@ from urllib.parse import urlparse, parse_qs
 from ..services.flow_entity import FlowEntity, FlowConfig
 
 
-def main_menu_reply_keyboard(run_state: str = "idle") -> ReplyKeyboardMarkup:
+def main_menu_reply_keyboard() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(keyboard=[
+        [KeyboardButton(text="🔴 Ручной режим"), KeyboardButton(text="🔍 Мониторинг")],
+        [KeyboardButton(text="📝 Вопросы"), KeyboardButton(text="📜 История")],
+        [KeyboardButton(text="⚙️ Settings")]
+    ], resize_keyboard=True)
+
+
+def manual_mode_reply_keyboard(run_state: str = "idle") -> ReplyKeyboardMarkup:
     controls = []
     if run_state == "running":
         controls = [KeyboardButton(text="⏸ Pause"), KeyboardButton(text="⏹ Stop")]
     elif run_state == "paused":
         controls = [KeyboardButton(text="▶️ Resume"), KeyboardButton(text="⏹ Stop")]
     else:
-        controls = [KeyboardButton(text="▶️ Run")]
+        controls = [KeyboardButton(text="▶️ Run Manual")]
 
-    keyboard = [
+    return ReplyKeyboardMarkup(keyboard=[
         controls,
         [KeyboardButton(text="📂 Flows"), KeyboardButton(text="📊 Stats")],
-        [KeyboardButton(text="📜 History"), KeyboardButton(text="📝 Вопросы"), KeyboardButton(text="⚙️ Settings")]
-    ]
-    return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
+        [KeyboardButton(text="⬅️ Back to Main Menu")]
+    ], resize_keyboard=True)
+
+
+def monitoring_mode_reply_keyboard(enabled: bool) -> ReplyKeyboardMarkup:
+    toggle_btn = KeyboardButton(text="🔴 Выключить авто-поиск") if enabled else KeyboardButton(text="🟢 Включить авто-поиск")
+    return ReplyKeyboardMarkup(keyboard=[
+        [toggle_btn],
+        [KeyboardButton(text="📂 Flows"), KeyboardButton(text="📊 Stats")],
+        [KeyboardButton(text="📜 History"), KeyboardButton(text="⬅️ Back to Main Menu")]
+    ], resize_keyboard=True)
 
 
 def main_menu_keyboard(hh_session_ok: bool, flows: list[FlowEntity], active_flow_id: int | None, run_state: str = "idle") -> InlineKeyboardMarkup:
@@ -216,13 +232,11 @@ def model_list_keyboard(models: list[dict], current_model: str) -> InlineKeyboar
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def settings_reply_keyboard(hh_linked: bool, monitoring_enabled: bool = False) -> ReplyKeyboardMarkup:
+def settings_reply_keyboard(hh_linked: bool) -> ReplyKeyboardMarkup:
     hh_button = KeyboardButton(text="🔓 Logout HH") if hh_linked else KeyboardButton(text="🔑 Login HH")
-    monitoring_text = "🔍 Мониторинг: [ВКЛ]" if monitoring_enabled else "🔍 Мониторинг: [ВЫКЛ]"
     keyboard = [
         [KeyboardButton(text="🤖 Choose Gemini Model"), hh_button],
-        [KeyboardButton(text="🔔 Notifications"), KeyboardButton(text=monitoring_text)],
-        [KeyboardButton(text="🧹 Clear Cache"), KeyboardButton(text="🔄 Сбросить лимиты")],
+        [KeyboardButton(text="🔔 Notifications"), KeyboardButton(text="🧹 Clear Cache"), KeyboardButton(text="🔄 Сбросить лимиты")],
         [KeyboardButton(text="⬅️ Back to Main Menu")]
     ]
     return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
