@@ -382,7 +382,7 @@ async def stats_message(message: Message) -> None:
     await message.answer(text, parse_mode="HTML")
 
 
-@common_router.message(F.text == "📜 History")
+@common_router.message(F.text.in_({"📜 History", "📜 История"}))
 async def history_message(message: Message) -> None:
     if not await _check_access(message.from_user.id):
         return

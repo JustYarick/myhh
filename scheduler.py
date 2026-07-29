@@ -163,16 +163,19 @@ class Scheduler:
         user_time = datetime.now(timezone.utc) + timedelta(hours=tz_offset)
         time_str = user_time.strftime("%d/%m/%y %H:%M:%S")
 
-        start_msg = (
-            f"🚀 <b>Запуск планировщика</b>\n\n"
-            f"📅 Время запуска: <code>{time_str}</code> (UTC{'+' if tz_offset >= 0 else ''}{tz_offset})\n"
-            f"📂 Поток: <b>{flow.name}</b>\n"
-            f"🎯 Цель за запуск: <b>{flow.config.target_applies}</b> откл.\n"
-            f"⏱ Суточный лимит: <b>{flow.config.max_apps_per_day}</b> откл.\n"
-            f"🤖 Модель ИИ: <code>{gemini_model}</code>\n"
-            f"⏱ Паузы: <b>{flow.config.delay_min}-{flow.config.delay_max}</b> сек.\n"
-            f"🔗 Ссылка поиска:\n<code>{mod_url}</code>"
-        )
+        if self.name == "Monitoring":
+            start_msg = "🔍 <b>Начало обхода новых вакансий...</b>"
+        else:
+            start_msg = (
+                f"🚀 <b>Запуск планировщика</b>\n\n"
+                f"📅 Время запуска: <code>{time_str}</code> (UTC{'+' if tz_offset >= 0 else ''}{tz_offset})\n"
+                f"📂 Поток: <b>{flow.name}</b>\n"
+                f"🎯 Цель за запуск: <b>{flow.config.target_applies}</b> откл.\n"
+                f"⏱ Суточный лимит: <b>{flow.config.max_apps_per_day}</b> откл.\n"
+                f"🤖 Модель ИИ: <code>{gemini_model}</code>\n"
+                f"⏱ Паузы: <b>{flow.config.delay_min}-{flow.config.delay_max}</b> сек.\n"
+                f"🔗 Ссылка поиска:\n<code>{mod_url}</code>"
+            )
 
         self._stop_event.clear()
         self._resume_event.set()
