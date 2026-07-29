@@ -9,6 +9,7 @@ class FlowConfig:
     resume_text: str = ""
     vacancy_count: int = 0
     max_pages: int = 3
+    target_applies: int = 30
     max_apps_per_day: int = 50
     max_apps_per_hour: int = 10
     delay_min: float = 5.0
@@ -77,7 +78,7 @@ class FlowConfig:
             resume_status = f"loaded ({len(self.resume_text)} chars)" if self.resume_text else "not loaded"
             resume_icon = "✅" if self.resume_text else "❌"
             lines.append(f"{resume_icon} Resume: {resume_status}")
-            lines.append(f"📄 Pages: <b>{self.max_pages}</b>")
+            lines.append(f"🎯 Target applies: <b>{self.target_applies}</b>")
             lines.append(f"⏱ Limits: <b>{self.max_apps_per_day}</b>/day, <b>{self.max_apps_per_hour}</b>/hour")
         else:
             lines.append("❌ <i>No search URL set</i>")

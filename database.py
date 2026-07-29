@@ -245,7 +245,7 @@ async def _update_daily_stats(status: str) -> None:
                 today,
                 1 if status == "success" else 0,
                 1 if status == "error" else 0,
-                1 if status == "skipped" else 0,
+                1 if status in ("skipped", "skipped_questions") else 0,
                 1 if status == "analyzed_skip" else 0,
             ),
         )

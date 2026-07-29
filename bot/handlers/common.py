@@ -235,18 +235,18 @@ async def flows_message(message: Message) -> None:
     if not await _check_access(message.from_user.id):
         return
     from ...services import flow_entity as flow_db
-    from ..keyboards import flows_list_keyboard
+    from ..keyboards import flows_reply_keyboard
     flows = await flow_db.list_flows()
     active_id = await flow_db.get_active_flow_id()
     if not flows:
         await message.answer(
             "No flows yet. Create one to start.",
-            reply_markup=flows_list_keyboard([], active_id),
+            reply_markup=flows_reply_keyboard([], active_id),
         )
     else:
         await message.answer(
             "Your flows:",
-            reply_markup=flows_list_keyboard(flows, active_id),
+            reply_markup=flows_reply_keyboard(flows, active_id),
         )
 
 

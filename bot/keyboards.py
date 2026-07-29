@@ -126,7 +126,7 @@ def flow_edit_keyboard(flow_id: int, config) -> InlineKeyboardMarkup:
             rows.append([InlineKeyboardButton(text="Refresh resume", callback_data=f"fe_{flow_id}_refresh_resume")])
     else:
         rows.append([InlineKeyboardButton(text="Resume: not set", callback_data=f"flow_pick_resume_{flow_id}")])
-    rows.append([InlineKeyboardButton(text=f"Pages: {config.max_pages}", callback_data=f"fe_{flow_id}_max_pages")])
+    rows.append([InlineKeyboardButton(text=f"🎯 Откликов за запуск: {config.target_applies}", callback_data=f"fe_{flow_id}_target_applies")])
     rows.append([
         InlineKeyboardButton(text=f"Day: {config.max_apps_per_day}", callback_data=f"fe_{flow_id}_max_apps_per_day"),
         InlineKeyboardButton(text=f"Hour: {config.max_apps_per_hour}", callback_data=f"fe_{flow_id}_max_apps_per_hour"),
@@ -135,7 +135,6 @@ def flow_edit_keyboard(flow_id: int, config) -> InlineKeyboardMarkup:
         InlineKeyboardButton(text=f"Min delay: {config.delay_min}s", callback_data=f"fe_{flow_id}_delay_min"),
         InlineKeyboardButton(text=f"Max delay: {config.delay_max}s", callback_data=f"fe_{flow_id}_delay_max"),
     ])
-    rows.append([InlineKeyboardButton(text=f"Page delay: {config.delay_between_pages}s", callback_data=f"fe_{flow_id}_delay_between_pages")])
     rows.append([
         InlineKeyboardButton(text="Prompts", callback_data=f"fe_{flow_id}_prompts"),
         InlineKeyboardButton(text="Test run", callback_data=f"fe_{flow_id}_test"),
@@ -272,5 +271,62 @@ def cancel_login_reply_keyboard() -> ReplyKeyboardMarkup:
 def confirm_logout_reply_keyboard() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(keyboard=[
         [KeyboardButton(text="⚠️ Confirm Logout"), KeyboardButton(text="⬅️ Back to Settings")]
+    ], resize_keyboard=True)
+
+
+def flows_reply_keyboard(flows: list, active_flow_id: int | None) -> ReplyKeyboardMarkup:
+    keyboard = []
+    for f in flows:
+        marker = "🟢 " if f.id == active_flow_id else "⚪ "
+        keyboard.append([KeyboardButton(text=f"📁 Flow: {marker}{f.name} (ID: {f.id})")])
+    keyboard.append([
+        KeyboardButton(text="➕ Create Flow"),
+        KeyboardButton(text="⬅️ Back to Main Menu")
+    ])
+    return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
+
+
+def flow_detail_reply_keyboard(flow_id: int, is_active: bool) -> ReplyKeyboardMarkup:
+    keyboard = []
+    if not is_active:
+        keyboard.append([KeyboardButton(text=f"🟢 Activate Flow {flow_id}")])
+    keyboard.append([
+        KeyboardButton(text=f"⚙️ Edit Flow {flow_id}"),
+        KeyboardButton(text=f"🧪 Test Run Flow {flow_id}"),
+    ])
+    keyboard.append([
+        KeyboardButton(text=f"❌ Delete Flow {flow_id}"),
+        KeyboardButton(text="📂 Back to Flows"),
+    ])
+    return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
+
+
+def flow_edit_reply_keyboard(flow_id: int) -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(keyboard=[
+        [
+            KeyboardButton(text=f"🔍 Set Search URL {flow_id}"),
+            KeyboardButton(text=f"👤 Set Resume {flow_id}"),
+        ],
+        [
+            KeyboardButton(text=f"🎯 Target Applies {flow_id}"),
+            KeyboardButton(text=f"⏱ Daily Limit {flow_id}"),
+            KeyboardButton(text=f"⏱ Hourly Limit {flow_id}"),
+        ],
+        [
+            KeyboardButton(text=f"⏳ Min Delay {flow_id}"),
+            KeyboardButton(text=f"⏳ Max Delay {flow_id}"),
+        ],
+        [
+            KeyboardButton(text=f"📝 Edit Prompts {flow_id}"),
+            KeyboardButton(text="📂 Back to Flows"),
+        ]
+    ], resize_keyboard=True)
+
+
+def flow_prompts_reply_keyboard(flow_id: int) -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(keyboard=[
+        [KeyboardButton(text=f"📝 Cover Letter Prompt {flow_id}")],
+        [KeyboardButton(text=f"📝 Analysis Prompt {flow_id}")],
+        [KeyboardButton(text=f"⚙️ Edit Flow {flow_id}")]
     ], resize_keyboard=True)
 

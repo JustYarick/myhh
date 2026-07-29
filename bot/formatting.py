@@ -87,11 +87,12 @@ def format_apply_success(
     )
 
 
-def format_session_finished(total: int, successful: int, errors: int) -> str:
+def format_session_finished(total: int, successful: int, errors: int, skipped: int = 0) -> str:
     return (
         f"📊 <b>Сессия авто-откликов завершена</b>\n"
         f"📋 Обработано сегодня: <b>{total}</b>\n"
         f"🟢 Успешных откликов: <b>{successful}</b>\n"
+        f"🟡 Пропущено (ИИ/фильтры): <b>{skipped}</b>\n"
         f"🔴 Ошибок: <b>{errors}</b>"
     )
 

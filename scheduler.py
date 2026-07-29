@@ -355,6 +355,7 @@ class Scheduler:
 
         self.state.vacancies_processed += 1
         await self._handle_apply_result(vacancy, result, analysis_result, cover_letter)
+        return result.status == ApplyStatus.SUCCESS
 
     async def _skip_vacancy(self, vacancy: Vacancy, analysis_result, is_test_skip: bool = False) -> None:
         await db.cache_vacancy_result(
@@ -475,8 +476,11 @@ class Scheduler:
         try:
             context, page = await browser_manager.create_run_context()
             logger.info("Created shared browser context for run")
+            session_success_count = 0
 
-            for page_num in range(config.max_pages):
+            # Search up to 40 pages (hh.ru limit) to satisfy the target apply limit
+            max_search_pages = 40
+            for page_num in range(max_search_pages):
                 if self._check_stop():
                     break
 
@@ -489,7 +493,7 @@ class Scheduler:
                     await self._notify(f"🛑 Stopping: {reason}", notify_type="error")
                     break
 
-                await self._notify(f"🔍 Searching page <b>{page_num + 1}/{config.max_pages}</b>...")
+                await self._notify(f"🔍 Searching page <b>{page_num + 1}/{max_search_pages}</b>...")
                 self.state.current_page = page_num + 1
 
                 # A search failure (timeout, layout change, network blip)
@@ -553,12 +557,18 @@ class Scheduler:
                     # whole run anymore.
                     try:
                         # Wrap vacancy processing with a hard timeout of 3 minutes (180s)
-                        await asyncio.wait_for(
+                        applied = await asyncio.wait_for(
                             self._process_card(
                                 card, page, anti_fraud, resume_text, config, i, len(cards)
                             ),
                             timeout=180.0
                         )
+                        if applied:
+                            session_success_count += 1
+                            if session_success_count >= config.target_applies:
+                                await self._notify(f"🎯 <b>Целевой лимит достигнут!</b> Отправлено <b>{session_success_count}</b> откликов за этот запуск.")
+                                self._stop_event.set()
+                                break
                     except _CaptchaPause:
                         break
                     except asyncio.CancelledError:
@@ -649,6 +659,7 @@ class Scheduler:
                     total=stats["total_applied"],
                     successful=stats["successful"],
                     errors=stats["errors"],
+                    skipped=stats["analyzed_skip"] + stats["skipped"],
                 )
             )
 

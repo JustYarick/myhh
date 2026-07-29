@@ -12,6 +12,282 @@ from ...services.hh_auth import hh_auth
 logger = logging.getLogger(__name__)
 flows_router = Router()
 
+import re
+from ...services.browser import browser_manager
+from ..keyboards import (
+    flows_reply_keyboard,
+    flow_detail_reply_keyboard,
+    flow_edit_reply_keyboard,
+    flow_prompts_reply_keyboard,
+)
+
+async def _start_field_edit(message: Message, flow_id: int, field: str, state: FSMContext) -> None:
+    flow = await flow_db.get_flow(flow_id)
+    if not flow:
+        await message.answer("Flow not found")
+        return
+
+    current = getattr(flow.config, field, None)
+    field_labels = {
+        "name": "Flow name",
+        "search_url": "Search URL (full hh.ru URL with filters)",
+        "resume_id": "Resume ID",
+        "target_applies": "Количество откликов за запуск",
+        "max_apps_per_day": "Max apps per day",
+        "max_apps_per_hour": "Max apps per hour",
+        "delay_min": "Min delay (seconds)",
+        "delay_max": "Max delay (seconds)",
+        "cover_letter_prompt": "Cover letter prompt",
+        "analysis_prompt": "Analysis prompt",
+    }
+    label = field_labels.get(field, field)
+
+    hint = ""
+    if field == "search_url":
+        hint = "\n\n<i>Paste a full HH.ru search URL with all filters.</i>\n<code>https://hh.ru/search/vacancy?text=DevOps&experience=between1And3&work_format=REMOTE</code>\nOr enter 'clear' to disable."
+    elif field in ("cover_letter_prompt", "analysis_prompt"):
+        hint = "\n\n<i>Available placeholders:</i>\n<code>{title}</code> <code>{employer}</code> <code>{description}</code> <code>{resume}</code>"
+
+    await message.answer(
+        f"<b>Flow: {flow.name}</b>\n\nEdit: <b>{label}</b>\nCurrent: <code>{current}</code>{hint}\n\nType new value below:",
+        parse_mode="HTML",
+    )
+    await state.update_data(flow_id=flow_id, field=field)
+    await state.set_state(EditFlowState.waiting_for_value)
+
+
+@flows_router.message(F.text == "➕ Create Flow")
+async def create_flow_message_handler(message: Message, state: FSMContext) -> None:
+    if not await _check_access(message.from_user.id):
+        return
+    await message.answer("Введите название нового потока:")
+    await state.set_state(NewFlowState.waiting_for_name)
+
+
+@flows_router.message(F.text == "📂 Back to Flows")
+async def back_to_flows_message_handler(message: Message) -> None:
+    if not await _check_access(message.from_user.id):
+        return
+    flows = await flow_db.list_flows()
+    active_id = await flow_db.get_active_flow_id()
+    await message.answer("Ваши потоки:", reply_markup=flows_reply_keyboard(flows, active_id))
+
+
+@flows_router.message(F.text.startswith("📁 Flow: "))
+async def flow_detail_message_handler(message: Message) -> None:
+    if not await _check_access(message.from_user.id):
+        return
+    match = re.search(r"ID: (\d+)", message.text)
+    if not match:
+        return
+    flow_id = int(match.group(1))
+    flow = await flow_db.get_flow(flow_id)
+    if not flow:
+        await message.answer("Поток не найден.")
+        return
+    active_id = await flow_db.get_active_flow_id()
+    is_active = (flow.id == active_id)
+    await message.answer(
+        f"📂 <b>Детали потока: {flow.name}</b>\n\n{flow.summary()}",
+        parse_mode="HTML",
+        reply_markup=flow_detail_reply_keyboard(flow.id, is_active)
+    )
+
+
+@flows_router.message(F.text.startswith("🟢 Activate Flow "))
+async def flow_activate_message_handler(message: Message) -> None:
+    if not await _check_access(message.from_user.id):
+        return
+    flow_id = int(message.text.replace("🟢 Activate Flow ", "").strip())
+    flow = await flow_db.get_flow(flow_id)
+    if not flow:
+        await message.answer("Поток не найден.")
+        return
+    await flow_db.set_active_flow(flow_id)
+    await message.answer(f"✅ Поток <b>{flow.name}</b> активирован.", parse_mode="HTML")
+    flows = await flow_db.list_flows()
+    await message.answer("Ваши потоки:", reply_markup=flows_reply_keyboard(flows, flow_id))
+
+
+@flows_router.message(F.text.startswith("🧪 Test Run Flow "))
+async def flow_test_message_handler(message: Message) -> None:
+    if not await _check_access(message.from_user.id):
+        return
+    flow_id = int(message.text.replace("🧪 Test Run Flow ", "").strip())
+    flow = await flow_db.get_flow(flow_id)
+    if not flow:
+        await message.answer("Поток не найден.")
+        return
+    await message.answer(f"🧪 Запуск тестирования потока: <b>{flow.name}</b>...\nЭто может занять некоторое время.", parse_mode="HTML")
+    try:
+        from ...services.hh_search import HHSearchService
+        from ...services.anti_fraud import AntiFraud
+        search_service = HHSearchService()
+        af = AntiFraud(flow.config)
+        async with browser_manager.get_page(use_session=True) as page:
+            await search_service._go_to_search_page(page, flow.config.search_url, af)
+            cards = await search_service._parse_vacancy_cards(page)
+            if not cards:
+                await message.answer("❌ Вакансии на первой странице не найдены.")
+                return
+            await message.answer(f"📋 Найдено {len(cards)} вакансий на первой странице. Запуск AI оценки...")
+            sample = cards[:3]
+            for idx, c in enumerate(sample):
+                desc = await search_service.get_vacancy_description(page, c["url"])
+                from ...services import gemini_service
+                res = await gemini_service.analyze_vacancy(
+                    {"title": c["title"], "url": c["url"], "employer": c["employer"], "description": desc},
+                    prompt_template=flow.config.analysis_prompt,
+                    resume_text=flow.config.resume_text
+                )
+                await message.answer(
+                    f"📄 <b>{idx+1}/{len(sample)}</b>: <a href=\"{c['url']}\">{c['title']}</a>\n"
+                    f"🏢 {c['employer']}\n"
+                    f"📊 Релевантность: {res.relevance}/10 (Отклик: {'Да' if res.apply else 'Нет'})\n"
+                    f"💬 <i>{res.summary}</i>",
+                    parse_mode="HTML"
+                )
+            await message.answer("✅ Тестовый запуск успешно завершен.")
+    except Exception as e:
+        logger.error(f"Test run error: {e}", exc_info=True)
+        await message.answer(f"❌ Ошибка тест-рана: {e}")
+
+
+@flows_router.message(F.text.startswith("❌ Delete Flow "))
+async def flow_delete_message_handler(message: Message, state: FSMContext) -> None:
+    if not await _check_access(message.from_user.id):
+        return
+    flow_id = int(message.text.replace("❌ Delete Flow ", "").strip())
+    flow = await flow_db.get_flow(flow_id)
+    if not flow:
+        await message.answer("Поток не найден.")
+        return
+    await message.answer(f"⚠️ Вы уверены, что хотите удалить поток <b>{flow.name}</b>? Напишите 'да' для подтверждения или 'нет' для отмены.", parse_mode="HTML")
+    await state.update_data(flow_id=flow_id)
+    await state.set_state(DeleteFlowState.confirming)
+
+
+@flows_router.message(F.text.startswith("⚙️ Edit Flow "))
+async def flow_edit_message_handler(message: Message) -> None:
+    if not await _check_access(message.from_user.id):
+        return
+    flow_id = int(message.text.replace("⚙️ Edit Flow ", "").strip())
+    flow = await flow_db.get_flow(flow_id)
+    if not flow:
+        await message.answer("Поток не найден.")
+        return
+    await message.answer(
+        f"⚙️ <b>Редактирование потока: {flow.name}</b>\n\nИспользуйте кнопки меню ниже для настройки параметров:",
+        parse_mode="HTML",
+        reply_markup=flow_edit_reply_keyboard(flow.id)
+    )
+
+
+@flows_router.message(F.text.startswith("📝 Edit Prompts "))
+async def flow_edit_prompts_message_handler(message: Message) -> None:
+    if not await _check_access(message.from_user.id):
+        return
+    flow_id = int(message.text.replace("📝 Edit Prompts ", "").strip())
+    await message.answer(
+        f"📝 <b>Редактирование промптов потока {flow_id}</b>",
+        parse_mode="HTML",
+        reply_markup=flow_prompts_reply_keyboard(flow_id)
+    )
+
+
+@flows_router.message(F.text.startswith("🔍 Set Search URL "))
+async def flow_set_search_url_message_handler(message: Message, state: FSMContext) -> None:
+    flow_id = int(message.text.replace("🔍 Set Search URL ", "").strip())
+    await _start_field_edit(message, flow_id, "search_url", state)
+
+
+@flows_router.message(F.text.startswith("👤 Set Resume "))
+async def flow_set_resume_message_handler(message: Message, state: FSMContext) -> None:
+    flow_id = int(message.text.replace("👤 Set Resume ", "").strip())
+    flow = await flow_db.get_flow(flow_id)
+    if not flow:
+        await message.answer("Flow not found")
+        return
+    try:
+        from ...services.hh_auth import hh_auth
+        resumes = await hh_auth.get_resumes()
+        if not resumes:
+            await message.answer("❌ На вашем HH аккаунте нет доступных резюме.")
+            return
+        from ..keyboards import resume_pick_keyboard
+        await message.answer("Выберите резюме из списка:", reply_markup=resume_pick_keyboard(resumes, flow_id))
+    except Exception as e:
+        await message.answer(f"❌ Не удалось получить резюме: {e}. Пожалуйста, убедитесь, что вы вошли в аккаунт HH.")
+
+
+@flows_router.message(F.text.startswith("🎯 Target Applies "))
+async def flow_target_applies_message_handler(message: Message, state: FSMContext) -> None:
+    flow_id = int(message.text.replace("🎯 Target Applies ", "").strip())
+    await _start_field_edit(message, flow_id, "target_applies", state)
+
+
+@flows_router.message(F.text.startswith("⏱ Daily Limit "))
+async def flow_daily_limit_message_handler(message: Message, state: FSMContext) -> None:
+    flow_id = int(message.text.replace("⏱ Daily Limit ", "").strip())
+    await _start_field_edit(message, flow_id, "max_apps_per_day", state)
+
+
+@flows_router.message(F.text.startswith("⏱ Hourly Limit "))
+async def flow_hourly_limit_message_handler(message: Message, state: FSMContext) -> None:
+    flow_id = int(message.text.replace("⏱ Hourly Limit ", "").strip())
+    await _start_field_edit(message, flow_id, "max_apps_per_hour", state)
+
+
+@flows_router.message(F.text.startswith("⏳ Min Delay "))
+async def flow_min_delay_message_handler(message: Message, state: FSMContext) -> None:
+    flow_id = int(message.text.replace("⏳ Min Delay ", "").strip())
+    await _start_field_edit(message, flow_id, "delay_min", state)
+
+
+@flows_router.message(F.text.startswith("⏳ Max Delay "))
+async def flow_max_delay_message_handler(message: Message, state: FSMContext) -> None:
+    flow_id = int(message.text.replace("⏳ Max Delay ", "").strip())
+    await _start_field_edit(message, flow_id, "delay_max", state)
+
+
+@flows_router.message(F.text.startswith("📝 Cover Letter Prompt "))
+async def flow_cover_prompt_message_handler(message: Message, state: FSMContext) -> None:
+    flow_id = int(message.text.replace("📝 Cover Letter Prompt ", "").strip())
+    await _start_field_edit(message, flow_id, "cover_letter_prompt", state)
+
+
+@flows_router.message(F.text.startswith("📝 Analysis Prompt "))
+async def flow_analysis_prompt_message_handler(message: Message, state: FSMContext) -> None:
+    flow_id = int(message.text.replace("📝 Analysis Prompt ", "").strip())
+    await _start_field_edit(message, flow_id, "analysis_prompt", state)
+
+
+@flows_router.message(StateFilter(DeleteFlowState.confirming))
+async def flow_delete_confirm_handler(message: Message, state: FSMContext) -> None:
+    if not await _check_access(message.from_user.id):
+        return
+    text = message.text.strip().lower()
+    data = await state.get_data()
+    flow_id = data.get("flow_id")
+    await state.clear()
+    
+    if text in ("да", "yes", "y", "подтверждаю"):
+        flow = await flow_db.get_flow(flow_id)
+        if flow:
+            active_id = await flow_db.get_active_flow_id()
+            await flow_db.delete_flow(flow_id)
+            if active_id == flow_id:
+                await flow_db.set_active_flow(None)
+            await message.answer(f"✅ Поток '<b>{flow.name}</b>' успешно удален.", parse_mode="HTML")
+        else:
+            await message.answer("Поток не найден.")
+    else:
+        await message.answer("❌ Удаление отменено.")
+    
+    flows = await flow_db.list_flows()
+    active_id = await flow_db.get_active_flow_id()
+    await message.answer("Ваши потоки:", reply_markup=flows_reply_keyboard(flows, active_id))
+
 
 class NewFlowState(StatesGroup):
     waiting_for_name = State()
@@ -238,12 +514,12 @@ async def new_flow_name_handler(message: Message, state: FSMContext) -> None:
         await flow_db.set_active_flow(flow.id)
         await message.answer(f"✅ Flow '{name}' activated as default.")
 
-    from ..keyboards import flow_detail_keyboard
+    from ..keyboards import flow_detail_reply_keyboard
     is_active = (await flow_db.get_active_flow_id()) == flow.id
     await message.answer(
         f"<b>Flow: {flow.name}</b>\n\n{flow.config.summary()}",
         parse_mode="HTML",
-        reply_markup=flow_detail_keyboard(flow.id, is_active),
+        reply_markup=flow_detail_reply_keyboard(flow.id, is_active),
     )
 
 
@@ -488,6 +764,7 @@ async def flow_field_edit_callback(callback: CallbackQuery, state: FSMContext) -
         "search_url": "Search URL (full hh.ru URL with filters)",
         "resume_id": "Resume ID",
         "max_pages": "Max pages",
+        "target_applies": "Количество откликов за запуск",
         "max_apps_per_day": "Max apps per day",
         "max_apps_per_hour": "Max apps per hour",
         "delay_min": "Min delay (seconds)",
@@ -579,7 +856,7 @@ async def flow_field_value_handler(message: Message, state: FSMContext) -> None:
                 await message.answer("❌ Format: START_HOUR STOP_HOUR or 'off'")
                 return
         await flow_db.update_flow(flow_id, config=flow.config)
-    elif field in ("max_pages", "max_apps_per_day", "max_apps_per_hour"):
+    elif field in ("max_pages", "max_apps_per_day", "max_apps_per_hour", "target_applies"):
         try:
             setattr(flow.config, field, int(text))
         except ValueError:
@@ -598,12 +875,12 @@ async def flow_field_value_handler(message: Message, state: FSMContext) -> None:
         await flow_db.update_flow(flow_id, config=flow.config)
 
     flow = await flow_db.get_flow(flow_id)
-    from ..keyboards import flow_edit_keyboard
-    await message.answer(f"✅ Updated <b>{field}</b>.", parse_mode="HTML")
+    from ..keyboards import flow_edit_reply_keyboard
+    await message.answer(f"✅ Значение для поля <b>{field}</b> успешно обновлено.", parse_mode="HTML")
     await message.answer(
-        f"<b>Flow: {flow.name}</b>\n\n{flow.config.summary()}",
+        f"⚙️ <b>Редактирование потока: {flow.name}</b>\n\n{flow.config.summary()}",
         parse_mode="HTML",
-        reply_markup=flow_edit_keyboard(flow_id, flow.config),
+        reply_markup=flow_edit_reply_keyboard(flow_id),
     )
 
 
