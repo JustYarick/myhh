@@ -538,6 +538,8 @@ class Scheduler:
             session_skipped_count = 0
             session_error_count = 0
             session_total_processed = 0
+            consecutive_cached_count = 0
+            first_cached_in_sequence = None
 
             # Search up to 40 pages (hh.ru limit) to satisfy the target apply limit
             max_search_pages = 40
@@ -629,6 +631,22 @@ class Scheduler:
                         await self._notify("🏁 <b>Достигнута граница ранее обработанных вакансий.</b> Завершаем.")
                         boundary_reached = True
                         break
+
+                    # Early exit if we encounter 2 consecutive cached vacancies
+                    # (remembers the first cached vacancy of the sequence as the new baseline)
+                    is_applied = await db.was_vacancy_applied(card.get("url", ""))
+                    is_cached = await db.is_vacancy_cached(card.get("url", ""))
+                    if is_applied or is_cached:
+                        if consecutive_cached_count == 0:
+                            first_cached_in_sequence = card_id
+                        consecutive_cached_count += 1
+                        if consecutive_cached_count >= 2:
+                            await self._notify("🏁 <b>Достигнута граница ранее обработанных вакансий (по кэшу).</b> Завершаем.")
+                            new_boundary_url = first_cached_in_sequence
+                            boundary_reached = True
+                            break
+                    else:
+                        consecutive_cached_count = 0
 
                     allowed, reason = await anti_fraud.check_rate_limits()
                     if not allowed:
