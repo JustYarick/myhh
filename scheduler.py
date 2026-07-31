@@ -248,6 +248,47 @@ class Scheduler:
             logger.debug(f"Already processed (cache): {card['title']}")
             return
 
+        # Check blacklist (exclude_employers)
+        exclude_list = config.exclude_employers
+        if exclude_list:
+            employer_name = card.get("employer", "").strip()
+            if employer_name:
+                blacklist_companies = [c.strip().lower() for c in exclude_list.split(",") if c.strip()]
+                lower_employer = employer_name.lower()
+                matched_blacklisted = None
+                for blacklisted in blacklist_companies:
+                    if blacklisted in lower_employer:
+                        matched_blacklisted = blacklisted
+                        break
+                
+                if matched_blacklisted:
+                    logger.info(f"Skipping vacancy '{card['title']}' - employer '{employer_name}' is blacklisted (matches '{matched_blacklisted}')")
+                    await db.cache_vacancy_result(
+                        vacancy_url=card["url"],
+                        title=card["title"],
+                        employer=employer_name,
+                        ai_relevance=0,
+                        ai_summary=f"Черный список: {matched_blacklisted}",
+                        result="analyzed_skip"
+                    )
+                    await db.save_application(
+                        vacancy_url=card["url"],
+                        title=card["title"],
+                        employer=employer_name,
+                        description="",
+                        cover_letter="",
+                        ai_relevance=0,
+                        ai_analysis=f"Черный список: {matched_blacklisted}",
+                        status="analyzed_skip",
+                        error_message=f"Компания в черном списке ({matched_blacklisted})"
+                    )
+                    await self._notify(
+                        f"⏭ <b>Пропущено (Черный список компаний):</b> <a href=\"{card['url']}\">{card['title']}</a> @ {employer_name}\n"
+                        f"<i>Компания совпадает с маской: '{matched_blacklisted}'</i>",
+                        notify_type="info"
+                    )
+                    return
+
         if not await vacancy_lock_manager.acquire(card["url"]):
             logger.debug(f"Vacancy is already being processed by another runner: {card['title']}")
             return

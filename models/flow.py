@@ -17,6 +17,7 @@ class FlowConfig:
     delay_between_pages: float = 10.0
     auto_start_hour: Optional[int] = None
     auto_stop_hour: Optional[int] = None
+    exclude_employers: str = ""
     cover_letter_prompt: str = (
         "Напиши короткое сопроводительное письмо на русском языке.\n"
         "Вакансия: {title}\n"
@@ -72,16 +73,18 @@ class FlowConfig:
             params = parse_qs(parsed.query)
             text = params.get("text", [""])[0]
             if text:
-                lines.append(f"🔍 Search: <b>{text}</b>")
+                lines.append(f"🔍 Поиск: <b>{text}</b>")
             if self.vacancy_count:
-                lines.append(f"📋 Found: <b>{self.vacancy_count}</b> vacancies")
-            resume_status = f"loaded ({len(self.resume_text)} chars)" if self.resume_text else "not loaded"
+                lines.append(f"📋 Найдено: <b>{self.vacancy_count}</b> вакансий")
+            resume_status = f"загружено ({len(self.resume_text)} симв.)" if self.resume_text else "не загружено"
             resume_icon = "✅" if self.resume_text else "❌"
-            lines.append(f"{resume_icon} Resume: {resume_status}")
-            lines.append(f"🎯 Target applies: <b>{self.target_applies}</b>")
-            lines.append(f"⏱ Limits: <b>{self.max_apps_per_day}</b>/day, <b>{self.max_apps_per_hour}</b>/hour")
+            lines.append(f"{resume_icon} Резюме: {resume_status}")
+            lines.append(f"🎯 Цель откликов: <b>{self.target_applies}</b>")
+            lines.append(f"⏱ Лимиты: <b>{self.max_apps_per_day}</b>/день, <b>{self.max_apps_per_hour}</b>/час")
+            if self.exclude_employers:
+                lines.append(f"🚫 Черный список: <code>{self.exclude_employers}</code>")
         else:
-            lines.append("❌ <i>No search URL set</i>")
+            lines.append("❌ <i>Ссылка поиска не настроена</i>")
         return "\n".join(lines)
 
 

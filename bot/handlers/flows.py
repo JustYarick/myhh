@@ -48,6 +48,7 @@ async def _start_field_edit(message: Message, flow_id: int, field: str, state: F
         "delay_max": "Max delay (seconds)",
         "cover_letter_prompt": "Cover letter prompt",
         "analysis_prompt": "Analysis prompt",
+        "exclude_employers": "Черный список компаний (через запятую)",
     }
     label = field_labels.get(field, field)
 
@@ -56,6 +57,8 @@ async def _start_field_edit(message: Message, flow_id: int, field: str, state: F
         hint = "\n\n<i>Paste a full HH.ru search URL with all filters.</i>\n<code>https://hh.ru/search/vacancy?text=DevOps&experience=between1And3&work_format=REMOTE</code>\nOr enter 'clear' to disable."
     elif field in ("cover_letter_prompt", "analysis_prompt"):
         hint = "\n\n<i>Available placeholders:</i>\n<code>{title}</code> <code>{employer}</code> <code>{description}</code> <code>{resume}</code>"
+    elif field == "exclude_employers":
+        hint = "\n\n<i>Введите названия компаний через запятую (например: Сбер, Яндекс, МТС). Бот будет автоматически пропускать отклики в эти компании. Введите 'clear' для очистки списка.</i>"
 
     await message.answer(
         f"<b>Flow: {flow.name}</b>\n\nEdit: <b>{label}</b>\nCurrent: <code>{current}</code>{hint}\n\nType new value below:",
@@ -249,6 +252,15 @@ async def flow_set_resume_message_handler(message: Message, state: FSMContext) -
         await message.answer("Выберите резюме из списка:", reply_markup=resume_pick_keyboard(resumes, flow_id))
     except Exception as e:
         await message.answer(f"❌ Не удалось получить резюме: {e}. Пожалуйста, убедитесь, что вы вошли в аккаунт HH.")
+
+
+@flows_router.message(F.text == "🚫 Черный список")
+async def flow_exclude_employers_message_handler(message: Message, state: FSMContext) -> None:
+    if not await _check_access(message.from_user.id):
+        return
+    data = await state.get_data()
+    flow_id = data.get("flow_id")
+    await _start_field_edit(message, flow_id, "exclude_employers", state)
 
 
 @flows_router.message(F.text.in_({"🎯 Target Applies", "🎯 Цель откликов за запуск"}))
@@ -900,6 +912,8 @@ async def flow_field_value_handler(message: Message, state: FSMContext) -> None:
             return
         await flow_db.update_flow(flow_id, config=flow.config)
     else:
+        if text.lower() == "clear":
+            text = ""
         setattr(flow.config, field, text)
         await flow_db.update_flow(flow_id, config=flow.config)
 

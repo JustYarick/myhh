@@ -342,6 +342,7 @@ def flow_edit_reply_keyboard() -> ReplyKeyboardMarkup:
         ],
         [
             KeyboardButton(text="📝 Редактировать промпты"),
+            KeyboardButton(text="🚫 Черный список"),
             KeyboardButton(text="📂 Назад к Потокам"),
         ]
     ], resize_keyboard=True)
