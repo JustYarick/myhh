@@ -1100,17 +1100,26 @@ async def monitoring_daemon_loop() -> None:
         logger.error(f"Error in monitoring daemon loop: {e}", exc_info=True)
 
 
-def set_notify_callback(callback: Callable[[str], Awaitable[None]]) -> None:
+def set_notify_callback(
+    callback: Callable[[str], Awaitable[None]],
+    photo_callback: Optional[Callable[[bytes, str], Awaitable[None]]] = None,
+) -> None:
+    from .services.notification_service import set_text_callback, set_photo_callback
+
     manual_scheduler.set_notify_callback(callback)
     monitoring_scheduler.set_notify_callback(callback)
-    
-    async def restore_daemons():
+    set_text_callback(callback)
+    if photo_callback is not None:
+        set_photo_callback(photo_callback)
+
+    async def restore_daemons() -> None:
         monitoring_enabled = (await db.get_setting("monitoring_mode", "false")) == "true"
         if monitoring_enabled:
             await start_monitoring_daemon()
-            
+
         resume_enabled = (await db.get_setting("resume_auto_update", "false")) == "true"
         if resume_enabled:
             await start_resume_updater_daemon()
-            
+
     asyncio.create_task(restore_daemons())
+

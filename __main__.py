@@ -80,17 +80,32 @@ async def _on_startup(bot) -> None:
     from .scheduler import set_notify_callback
 
     async def notify_callback(message: str) -> None:
-        for uid in settings.allowed_user_ids:
-            try:
-                await bot.send_message(chat_id=uid, text=message, parse_mode="HTML")
-            except Exception as e:
-                logger.error(f"Failed to notify {uid}: {e}")
+        await asyncio.gather(
+            *[
+                bot.send_message(chat_id=uid, text=message, parse_mode="HTML")
+                for uid in settings.allowed_user_ids
+            ],
+            return_exceptions=True,
+        )
+
+    async def notify_photo_callback(photo_bytes: bytes, caption: str) -> None:
+        from aiogram.types import BufferedInputFile
+        photo = BufferedInputFile(photo_bytes, filename="error_screenshot.png")
+        await asyncio.gather(
+            *[
+                bot.send_photo(chat_id=uid, photo=photo, caption=caption)
+                for uid in settings.allowed_user_ids
+            ],
+            return_exceptions=True,
+        )
 
     async def error_callback(message: str) -> None:
-        for uid in settings.allowed_user_ids:
-            await send_error_alert(uid, message)
+        await asyncio.gather(
+            *[send_error_alert(uid, message) for uid in settings.allowed_user_ids],
+            return_exceptions=True,
+        )
 
-    set_notify_callback(notify_callback)
+    set_notify_callback(notify_callback, notify_photo_callback)
 
     me = await bot.get_me()
     logger.info(f"Bot connected: @{me.username}")
@@ -101,12 +116,13 @@ async def _on_startup(bot) -> None:
         startup_text += "\n🔄 <b>Сервер перезапущен.</b> Восстанавливаю фоновый мониторинг вакансий..."
         logger.warning("System restart detected. Monitoring mode was active, recovering daemon loop.")
 
-    for uid in settings.allowed_user_ids:
-        try:
-            await bot.send_message(chat_id=uid, text=startup_text, parse_mode="HTML")
-            logger.info(f"Sent startup message to {uid}")
-        except Exception as e:
-            logger.error(f"Failed to notify {uid}: {e}")
+    await asyncio.gather(
+        *[
+            bot.send_message(chat_id=uid, text=startup_text, parse_mode="HTML")
+            for uid in settings.allowed_user_ids
+        ],
+        return_exceptions=True,
+    )
 
 
 async def _on_shutdown(bot) -> None:

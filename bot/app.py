@@ -6,6 +6,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 
 from ..config import get_settings
 from .handlers import router
+from .middleware import AccessMiddleware
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +25,8 @@ def create_bot_and_dispatcher():
     bot = Bot(token=settings.tg_bot_token, session=session)
     storage = MemoryStorage()
     dp = Dispatcher(storage=storage)
+    dp.message.middleware(AccessMiddleware())
+    dp.callback_query.middleware(AccessMiddleware())
     dp.include_router(router)
 
     logger.info("Telegram bot initialized")

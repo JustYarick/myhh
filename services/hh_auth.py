@@ -516,13 +516,13 @@ class HHAuthService:
 
     async def get_resume_text(self, resume_id: str) -> str:
         """Delegate to hh_resume service."""
-        from .hh_resume import fetch_resume_text
-        return await fetch_resume_text(resume_id)
+        from .hh_resume import resume_service
+        return await resume_service.fetch_resume_text(resume_id)
 
     async def publish_resume(self, resume_id: str) -> tuple[bool, str]:
         """Delegate to hh_resume service."""
-        from .hh_resume import publish_resume
-        return await publish_resume(resume_id)
+        from .hh_resume import resume_service
+        return await resume_service.publish_resume(resume_id)
 
     async def logout(self) -> bool:
         settings = get_settings()

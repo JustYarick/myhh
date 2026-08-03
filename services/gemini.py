@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import re
@@ -54,12 +55,15 @@ def _build_http_client() -> httpx.Client:
     return httpx.Client(timeout=30)
 
 
-def list_models(api_key: str) -> list[dict]:
+async def list_models(api_key: str) -> list[dict]:
     proxy = _get_proxy_url()
     url = "https://generativelanguage.googleapis.com/v1beta/models"
     try:
-        with _build_http_client() as client:
-            r = client.get(url, params={"key": api_key})
+        client_kwargs = {"timeout": 30}
+        if proxy:
+            client_kwargs["proxy"] = proxy
+        async with httpx.AsyncClient(**client_kwargs) as client:
+            r = await client.get(url, params={"key": api_key})
             r.raise_for_status()
             data = r.json()
             models = []
@@ -137,10 +141,14 @@ class GeminiService:
 
         try:
             client = self._get_client()
-            response = client.models.generate_content(
-                model=self._model,
-                contents=prompt,
-                config=self._no_afc_config(),
+            loop = asyncio.get_event_loop()
+            response = await loop.run_in_executor(
+                None,
+                lambda: client.models.generate_content(
+                    model=self._model,
+                    contents=prompt,
+                    config=self._no_afc_config(),
+                ),
             )
             text = response.text.strip()
             logger.info(f"[GEMINI] Cover letter FULL response:\n{'='*60}\n{text}\n{'='*60}")
@@ -181,10 +189,14 @@ class GeminiService:
 
         try:
             client = self._get_client()
-            response = client.models.generate_content(
-                model=self._model,
-                contents=prompt,
-                config=self._no_afc_config(),
+            loop = asyncio.get_event_loop()
+            response = await loop.run_in_executor(
+                None,
+                lambda: client.models.generate_content(
+                    model=self._model,
+                    contents=prompt,
+                    config=self._no_afc_config(),
+                ),
             )
             text = response.text.strip()
             logger.info(f"[GEMINI] Analysis FULL response:\n{'='*60}\n{text}\n{'='*60}")

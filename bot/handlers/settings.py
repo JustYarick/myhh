@@ -51,7 +51,7 @@ async def settings_model_callback(callback: CallbackQuery) -> None:
     from ...services.flow_entity import get_setting
     settings = get_settings()
     gemini_model = await get_setting("gemini_model", "gemini-2.0-flash")
-    models = list_models(settings.gemini_api_key)
+    models = await list_models(settings.gemini_api_key)
     if not models:
         await callback.message.edit_text(
             "<b>Global Settings</b>\n\n❌ Failed to fetch models. Check Gemini API key.",
@@ -143,7 +143,7 @@ async def settings_choose_model_message(message: Message) -> None:
     from ..keyboards import models_reply_keyboard
     settings = get_settings()
     gemini_model = await get_setting("gemini_model", "gemini-2.0-flash")
-    models = list_models(settings.gemini_api_key)
+    models = await list_models(settings.gemini_api_key)
     if not models:
         await message.answer("Ошибка получения моделей. Проверьте API-ключ.")
         return
