@@ -808,65 +808,24 @@ class Scheduler:
             self._run_state = RunState.IDLE
             self.state = BotState()
             if self.name == "Monitoring":
-                interval_mins = int(await db.get_setting("monitoring_interval", "30"))
-                jitter_mins = int(await db.get_setting("monitoring_jitter", "0"))
-                
-                import random
-                next_jitter_secs = random.randint(0, jitter_mins * 60) if jitter_mins > 0 else 0
-                await db.set_setting("monitoring_next_jitter", str(next_jitter_secs))
-                
-                from datetime import datetime, timedelta, timezone
-                import re
-                
-                prime_time = await db.get_setting("monitoring_prime_time", "24/7")
-                tz_offset = int(await db.get_setting("monitoring_timezone_offset", "3"))
-                
-                now_utc = datetime.now(timezone.utc)
-                standard_next_run_utc = now_utc + timedelta(minutes=interval_mins, seconds=next_jitter_secs)
-                
-                actual_next_run_utc = standard_next_run_utc
-                is_delayed_by_prime_time = False
-                
-                if prime_time != "24/7":
-                    match = re.search(r"(\d{2}):\d{2}\s*-\s*(\d{2}):\d{2}", prime_time)
-                    if match:
-                        start_h = int(match.group(1))
-                        end_h = int(match.group(2))
+                from datetime import datetime, timezone
+                next_run_str = "по расписанию"
+                next_run_db = await db.get_setting("monitoring_next_run", "")
+                if next_run_db:
+                    try:
+                        next_run_dt = datetime.fromisoformat(next_run_db)
+                        now_utc = datetime.now(timezone.utc)
+                        if next_run_dt > now_utc:
+                            diff_secs = int((next_run_dt - now_utc).total_seconds())
+                            diff_hours = diff_secs // 3600
+                            diff_mins = (diff_secs % 3600) // 60
+                            next_run_str = ""
+                            if diff_hours > 0:
+                                next_run_str += f"{diff_hours} ч "
+                            next_run_str += f"{diff_mins} мин"
+                    except Exception:
+                        pass
                         
-                        user_next = standard_next_run_utc + timedelta(hours=tz_offset)
-                        
-                        def is_hour_inside(h: int) -> bool:
-                            if start_h <= end_h:
-                                return start_h <= h < end_h
-                            else:
-                                return h >= start_h or h < end_h
-                        
-                        if not is_hour_inside(user_next.hour):
-                            is_delayed_by_prime_time = True
-                            user_now = now_utc + timedelta(hours=tz_offset)
-                            candidate = user_now.replace(hour=start_h, minute=0, second=0, microsecond=0)
-                            if candidate <= user_now:
-                                candidate += timedelta(days=1)
-                            actual_next_run_utc = candidate - timedelta(hours=tz_offset)
-                
-                if is_delayed_by_prime_time:
-                    diff = actual_next_run_utc - now_utc
-                    diff_secs = int(diff.total_seconds())
-                    diff_hours = diff_secs // 3600
-                    diff_mins = (diff_secs % 3600) // 60
-                    
-                    next_run_str = ""
-                    if diff_hours > 0:
-                        next_run_str += f"{diff_hours} ч "
-                    next_run_str += f"{diff_mins} мин"
-                    
-                    target_time_local = actual_next_run_utc + timedelta(hours=tz_offset)
-                    next_run_str += f" (начало рабочего времени в {target_time_local.strftime('%H:%M')} по UTC{'+' if tz_offset >= 0 else ''}{tz_offset})"
-                else:
-                    next_run_str = f"{interval_mins} мин"
-                    if next_jitter_secs > 0:
-                        next_run_str += f" (+ {next_jitter_secs // 60}м {next_jitter_secs % 60}с рандом задержки)"
-                
                 if last_newest_url:
                     await self._notify(
                         format_monitoring_finished(

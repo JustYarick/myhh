@@ -208,7 +208,7 @@ async def _monitoring_menu_message(message: Message) -> None:
     tz_offset = int(await db.get_setting("monitoring_timezone_offset", "3"))
 
     run_status = "РАБОТАЕТ" if monitoring_scheduler._run_state.value == "running" else "ОЖИДАНИЕ"
-    next_run_text = format_next_run_text(monitoring_daemon, monitoring_enabled)
+    next_run_text = await format_next_run_text("monitoring_next_run", monitoring_enabled)
 
     text = (
         f"🔍 <b>Режим авто-мониторинга</b>\n\n"

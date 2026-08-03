@@ -29,6 +29,14 @@ class MonitoringDaemonService(BackgroundDaemon):
                 await self.sleep(wait_secs)
 
             while True:
+                total_wait = await calculate_next_wait_seconds(
+                    "monitoring_interval", "30",
+                    "monitoring_jitter", "0",
+                    prime_time_key="monitoring_prime_time"
+                )
+                next_run_dt = datetime.now(timezone.utc) + timedelta(seconds=total_wait)
+                await db.set_setting("monitoring_next_run", next_run_dt.isoformat())
+
                 if monitoring_scheduler._run_state == RunState.IDLE:
                     flow = await get_active_flow()
                     if flow:
@@ -37,19 +45,14 @@ class MonitoringDaemonService(BackgroundDaemon):
                         while monitoring_scheduler._run_state == RunState.RUNNING:
                             await asyncio.sleep(5)
 
-                total_wait = await calculate_next_wait_seconds(
-                    "monitoring_interval", "30",
-                    "monitoring_jitter", "0"
-                )
-
-                next_run_dt = datetime.now(timezone.utc) + timedelta(seconds=total_wait)
-                await db.set_setting("monitoring_next_run", next_run_dt.isoformat())
-
-                logger.info(f"Monitoring daemon: sleeping {total_wait}s until next run")
-                triggered = await self.sleep(total_wait)
-                if triggered:
-                    logger.info("Monitoring daemon: woken up by trigger")
-                    await db.set_setting("monitoring_next_run", "")
+                now = datetime.now(timezone.utc)
+                if next_run_dt > now:
+                    sleep_secs = (next_run_dt - now).total_seconds()
+                    logger.info(f"Monitoring daemon: sleeping {sleep_secs}s until next run")
+                    triggered = await self.sleep(sleep_secs)
+                    if triggered:
+                        logger.info("Monitoring daemon: woken up by trigger")
+                        await db.set_setting("monitoring_next_run", "")
 
         except asyncio.CancelledError:
             logger.info("Monitoring daemon cancelled")
@@ -76,29 +79,35 @@ class ResumeUpdaterDaemonService(BackgroundDaemon):
                 await self.sleep(wait_secs)
 
             while True:
-                # Prime-time guard
+                total_wait = await calculate_next_wait_seconds(
+                    "resume_update_interval", "240",
+                    "resume_update_jitter", "15",
+                    min_interval_mins=240,
+                    prime_time_key="resume_update_prime_time"
+                )
+                next_run_dt = datetime.now(timezone.utc) + timedelta(seconds=total_wait)
+                await db.set_setting("resume_update_next_run", next_run_dt.isoformat())
+
+                # Prime-time guard for immediate execution
                 if not await is_within_prime_time("resume_update_prime_time", "24/7"):
-                    await self.sleep(60 * 60)  # Check again in 1 hour
+                    now = datetime.now(timezone.utc)
+                    if next_run_dt > now:
+                        sleep_secs = (next_run_dt - now).total_seconds()
+                        await self.sleep(sleep_secs)
                     continue
 
                 flow = await get_active_flow()
                 if settings.session_file.exists() and flow and flow.config.resume_id:
                     await self._raise_resume(flow.config.resume_id)
 
-                total_wait = await calculate_next_wait_seconds(
-                    "resume_update_interval", "240",
-                    "resume_update_jitter", "15",
-                    min_interval_mins=240
-                )
-
-                next_run_dt = datetime.now(timezone.utc) + timedelta(seconds=total_wait)
-                await db.set_setting("resume_update_next_run", next_run_dt.isoformat())
-
-                logger.info(f"Resume updater daemon: sleeping {total_wait}s until next run")
-                triggered = await self.sleep(total_wait)
-                if triggered:
-                    logger.info("Resume updater daemon: woken up by trigger")
-                    await db.set_setting("resume_update_next_run", "")
+                now = datetime.now(timezone.utc)
+                if next_run_dt > now:
+                    sleep_secs = (next_run_dt - now).total_seconds()
+                    logger.info(f"Resume updater daemon: sleeping {sleep_secs}s until next run")
+                    triggered = await self.sleep(sleep_secs)
+                    if triggered:
+                        logger.info("Resume updater daemon: woken up by trigger")
+                        await db.set_setting("resume_update_next_run", "")
 
         except asyncio.CancelledError:
             logger.info("Resume updater daemon cancelled")

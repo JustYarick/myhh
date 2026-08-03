@@ -335,7 +335,7 @@ async def _resume_update_menu_message(message: Message) -> None:
     prime_time = await db.get_setting("resume_update_prime_time", "24/7")
     tz_offset = int(await db.get_setting("monitoring_timezone_offset", "3"))
 
-    next_run_text = format_next_run_text(resume_updater_daemon, enabled)
+    next_run_text = await format_next_run_text("resume_update_next_run", enabled)
 
     text = (
         f"🚀 <b>Автоматическое поднятие резюме</b>\n\n"
