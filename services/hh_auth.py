@@ -408,7 +408,7 @@ class HHAuthService:
                 return name
 
             await page.goto("https://hh.ru/", wait_until="domcontentloaded", timeout=15000)
-            await asyncio.sleep(3)
+            await asyncio.sleep(1)
 
             name = await page.evaluate(
                 "() => { try { return window.globalVars && window.globalVars.login; } catch(e) { return null; } }"
@@ -438,9 +438,9 @@ class HHAuthService:
                 await page.goto(
                     "https://hh.ru/applicant/resumes",
                     wait_until="domcontentloaded",
-                    timeout=30000,
+                    timeout=20000,
                 )
-                await asyncio.sleep(3)
+                await asyncio.sleep(1)
     
                 for sel in [
                     "iframe[src*='captcha']",

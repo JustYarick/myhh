@@ -206,12 +206,9 @@ async def fetch_resume_text(resume_id: str) -> str:
 
     try:
         async with browser_manager.get_page(use_session=True) as page:
-            await page.goto("https://hh.ru/", wait_until="domcontentloaded", timeout=15000)
-            await asyncio.sleep(1)
-
             url = f"https://hh.ru/resume/{resume_id}"
             logger.info(f"Fetching resume text: {url}")
-            await page.goto(url, wait_until="networkidle", timeout=30000)
+            await page.goto(url, wait_until="domcontentloaded", timeout=20000)
 
             for sel in ['[class*="magritte-v-spacing-container"]', 'h1', '[data-qa="resume-personal-name"]', '.resume-content']:
                 try:
@@ -254,16 +251,13 @@ async def publish_resume(resume_id: str) -> tuple[bool, str]:
 
     try:
         async with browser_manager.get_page(use_session=True) as page:
-            await page.goto("https://hh.ru/", wait_until="domcontentloaded", timeout=15000)
-            await asyncio.sleep(1)
-
             url = f"https://hh.ru/resume/{resume_id}"
             logger.info(f"Navigating to resume page to raise: {url}")
             try:
-                await page.goto(url, wait_until="domcontentloaded", timeout=30000)
+                await page.goto(url, wait_until="domcontentloaded", timeout=20000)
             except Exception as navigation_err:
                 logger.warning(f"Navigation warning (non-fatal): {navigation_err}")
-            await asyncio.sleep(3)
+            await asyncio.sleep(1)
 
             has_captcha = await page.evaluate(
                 "() => { try { return document.title.toLowerCase().includes('captcha') || document.title.toLowerCase().includes('robot'); } catch(e) { return false; } }"
@@ -286,12 +280,38 @@ async def publish_resume(resume_id: str) -> tuple[bool, str]:
                 logger.info(f"Clicked raise button for resume {resume_id}")
                 await asyncio.sleep(3)
 
-                is_disabled_after = await btn.get_attribute("disabled")
-                if is_disabled_after is not None or "обновлено" in (await btn.inner_text()).lower():
+                is_disabled_after = None
+                try:
+                    is_disabled_after = await btn.get_attribute("disabled", timeout=2000)
+                except Exception:
+                    pass
+
+                btn_text = ""
+                try:
+                    btn_text = await btn.inner_text(timeout=2000)
+                except Exception:
+                    pass
+
+                if (
+                    is_disabled_after is not None 
+                    or "обновлено" in btn_text.lower() 
+                    or "поднимать" in btn_text.lower() 
+                    or "подминать" in btn_text.lower()
+                ):
                     return True, "Успешно поднято"
 
-                content = await page.content()
-                if "вы сможете обновить" in content.lower() or "можно обновить через" in content.lower():
+                content = ""
+                try:
+                    content = await page.content()
+                except Exception:
+                    pass
+
+                if (
+                    "вы сможете обновить" in content.lower() 
+                    or "можно обновить через" in content.lower() 
+                    or "поднимать автоматически" in content.lower() 
+                    or "подминать" in content.lower()
+                ):
                     return True, "Успешно поднято"
 
                 return True, "Кнопка нажата"
