@@ -326,6 +326,8 @@ async def set_timezone_callback(callback: CallbackQuery) -> None:
 async def _resume_update_menu_message(message: Message) -> None:
     from ... import database as db
     from ..keyboards import resume_update_mode_reply_keyboard
+    from ...scheduler.daemons import resume_updater_daemon
+    from ..utils.formatters import format_next_run_text
     
     enabled = (await db.get_setting("resume_auto_update", "false")) == "true"
     interval = int(await db.get_setting("resume_update_interval", "240"))
@@ -333,12 +335,15 @@ async def _resume_update_menu_message(message: Message) -> None:
     prime_time = await db.get_setting("resume_update_prime_time", "24/7")
     tz_offset = int(await db.get_setting("monitoring_timezone_offset", "3"))
 
+    next_run_text = format_next_run_text(resume_updater_daemon, enabled)
+
     text = (
         f"🚀 <b>Автоматическое поднятие резюме</b>\n\n"
         f"Статус: {'<b>АКТИВЕН</b> 🟢' if enabled else '<b>ВЫКЛЮЧЕН</b> 🔴'}\n"
         f"Интервал: <b>Раз в {interval} минут</b> (минимум 240м / 4ч)\n"
         f"Случайный сдвиг (Рандом): <b>{jitter if jitter > 0 else 'Выключен'} мин</b>\n"
-        f"Время работы: <b>{prime_time}</b> (по UTC{'+' if tz_offset >= 0 else ''}{tz_offset})\n\n"
+        f"Время работы: <b>{prime_time}</b> (по UTC{'+' if tz_offset >= 0 else ''}{tz_offset})\n"
+        f"{next_run_text}\n"
         f"Бот будет автоматически обновлять дату публикации резюме, выбранного в активном Потоке (Flow)."
     )
     await message.answer(
@@ -363,6 +368,7 @@ async def enable_resume_update_handler(message: Message) -> None:
         return
     from ... import database as db
     await db.set_setting("resume_auto_update", "true")
+    await db.set_setting("resume_update_next_run", "")
     # Reset last update timestamp to force immediate run or standard timer run
     from ...services.flow_entity import get_active_flow
     flow = await get_active_flow()
@@ -382,6 +388,7 @@ async def disable_resume_update_handler(message: Message) -> None:
         return
     from ... import database as db
     await db.set_setting("resume_auto_update", "false")
+    await db.set_setting("resume_update_next_run", "")
     from ...scheduler import stop_resume_updater_daemon
     await stop_resume_updater_daemon()
     await message.answer("🔴 Автоподнятие резюме <b>выключено</b>.", parse_mode="HTML")

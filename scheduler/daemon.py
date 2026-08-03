@@ -36,6 +36,9 @@ class BackgroundDaemon:
         # Created lazily so they bind to the running event loop
         self._lock: Optional[asyncio.Lock] = None
         self._wakeup: Optional[asyncio.Event] = None
+        
+        import datetime
+        self.next_run_time: Optional[datetime.datetime] = None
 
     # ------------------------------------------------------------------
     # Lazy primitive accessors
@@ -95,11 +98,16 @@ class BackgroundDaemon:
         """
         event = self._get_wakeup()
         event.clear()
+        
+        import datetime
+        self.next_run_time = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(seconds=seconds)
         try:
             await asyncio.wait_for(asyncio.shield(event.wait()), timeout=seconds)
             return True
         except asyncio.TimeoutError:
             return False
+        finally:
+            self.next_run_time = None
 
     async def _run(self) -> None:
         raise NotImplementedError

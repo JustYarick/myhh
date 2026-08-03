@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from datetime import datetime, timedelta, timezone
 
 from ..config import get_settings
 from .. import database as db
@@ -7,6 +8,7 @@ from ..services.flow_entity import get_active_flow
 from ..services.hh_auth import hh_auth
 from .daemon import BackgroundDaemon
 from .runner import monitoring_scheduler, RunState
+from .time_helpers import calculate_next_wait_seconds, is_within_prime_time, get_resumed_sleep_time
 
 logger = logging.getLogger(__name__)
 
@@ -19,32 +21,14 @@ class MonitoringDaemonService(BackgroundDaemon):
     """Periodically triggers the monitoring Scheduler to scan for new vacancies."""
 
     async def _run(self) -> None:
-        import random
-
         logger.info("Monitoring daemon started")
         try:
-            # First iteration: run IMMEDIATELY on startup / re-enable
-            if monitoring_scheduler._run_state == RunState.IDLE:
-                flow = await get_active_flow()
-                if flow:
-                    logger.info("Monitoring daemon: first run — triggering immediately")
-                    await monitoring_scheduler.start()
-                    while monitoring_scheduler._run_state == RunState.RUNNING:
-                        await asyncio.sleep(5)
+            wait_secs = await get_resumed_sleep_time("monitoring_next_run")
+            if wait_secs is not None:
+                logger.info(f"Monitoring daemon: resuming sleep for {wait_secs}s from previous session")
+                await self.sleep(wait_secs)
 
             while True:
-                interval_mins = int(await db.get_setting("monitoring_interval", "30"))
-                jitter = int(await db.get_setting("monitoring_jitter", "0"))
-                jitter_secs = random.randint(0, jitter * 60) if jitter > 0 else 0
-                total_wait = (interval_mins * 60) + jitter_secs
-
-                logger.info(f"Monitoring daemon: sleeping {total_wait}s until next run")
-                triggered = await self.sleep(total_wait)
-                if triggered:
-                    logger.info("Monitoring daemon: woken up by trigger")
-
-
-
                 if monitoring_scheduler._run_state == RunState.IDLE:
                     flow = await get_active_flow()
                     if flow:
@@ -52,6 +36,20 @@ class MonitoringDaemonService(BackgroundDaemon):
                         await monitoring_scheduler.start()
                         while monitoring_scheduler._run_state == RunState.RUNNING:
                             await asyncio.sleep(5)
+
+                total_wait = await calculate_next_wait_seconds(
+                    "monitoring_interval", "30",
+                    "monitoring_jitter", "0"
+                )
+
+                next_run_dt = datetime.now(timezone.utc) + timedelta(seconds=total_wait)
+                await db.set_setting("monitoring_next_run", next_run_dt.isoformat())
+
+                logger.info(f"Monitoring daemon: sleeping {total_wait}s until next run")
+                triggered = await self.sleep(total_wait)
+                if triggered:
+                    logger.info("Monitoring daemon: woken up by trigger")
+                    await db.set_setting("monitoring_next_run", "")
 
         except asyncio.CancelledError:
             logger.info("Monitoring daemon cancelled")
@@ -68,56 +66,39 @@ class ResumeUpdaterDaemonService(BackgroundDaemon):
     """Periodically raises the active resume on HH.ru."""
 
     async def _run(self) -> None:
-        import re
-        import random
-        from datetime import datetime, timedelta, timezone
-
         logger.info("Resume updater daemon started")
         try:
-            # First iteration: run IMMEDIATELY on startup / re-enable
             settings = get_settings()
-            flow = await get_active_flow()
-            if settings.session_file.exists() and flow and flow.config.resume_id:
-                await self._raise_resume(flow.config.resume_id)
+            
+            wait_secs = await get_resumed_sleep_time("resume_update_next_run")
+            if wait_secs is not None:
+                logger.info(f"Resume updater daemon: resuming sleep for {wait_secs}s from previous session")
+                await self.sleep(wait_secs)
 
             while True:
-                interval_mins = int(await db.get_setting("resume_update_interval", "240"))
-                interval_mins = max(interval_mins, 240)  # minimum 4 h
+                # Prime-time guard
+                if not await is_within_prime_time("resume_update_prime_time", "24/7"):
+                    await self.sleep(60 * 60)  # Check again in 1 hour
+                    continue
 
-                jitter = int(await db.get_setting("resume_update_jitter", "15"))
-                jitter_secs = random.randint(0, jitter * 60) if jitter > 0 else 0
-                total_wait = (interval_mins * 60) + jitter_secs
+                flow = await get_active_flow()
+                if settings.session_file.exists() and flow and flow.config.resume_id:
+                    await self._raise_resume(flow.config.resume_id)
+
+                total_wait = await calculate_next_wait_seconds(
+                    "resume_update_interval", "240",
+                    "resume_update_jitter", "15",
+                    min_interval_mins=240
+                )
+
+                next_run_dt = datetime.now(timezone.utc) + timedelta(seconds=total_wait)
+                await db.set_setting("resume_update_next_run", next_run_dt.isoformat())
 
                 logger.info(f"Resume updater daemon: sleeping {total_wait}s until next run")
                 triggered = await self.sleep(total_wait)
                 if triggered:
                     logger.info("Resume updater daemon: woken up by trigger")
-
-                # Prime-time guard
-                prime_time = await db.get_setting("resume_update_prime_time", "24/7")
-                if prime_time != "24/7":
-                    tz_offset = int(await db.get_setting("monitoring_timezone_offset", "3"))
-                    user_time = datetime.now(timezone.utc) + timedelta(hours=tz_offset)
-                    current_hour = user_time.hour
-
-                    match = re.search(r"(\d{2}):\d{2}\s*-\s*(\d{2}):\d{2}", prime_time)
-                    if match:
-                        start_h, end_h = int(match.group(1)), int(match.group(2))
-                        inside = (
-                            start_h <= current_hour < end_h
-                            if start_h <= end_h
-                            else current_hour >= start_h or current_hour < end_h
-                        )
-                        if not inside:
-                            logger.info(
-                                f"Resume updater: hour {current_hour:02d}:00 "
-                                f"outside prime time ({prime_time}), skipping"
-                            )
-                            continue
-
-                flow = await get_active_flow()
-                if flow and flow.config.resume_id:
-                    await self._raise_resume(flow.config.resume_id)
+                    await db.set_setting("resume_update_next_run", "")
 
         except asyncio.CancelledError:
             logger.info("Resume updater daemon cancelled")

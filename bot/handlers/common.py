@@ -198,6 +198,9 @@ async def _manual_menu_message(message: Message) -> None:
 async def _monitoring_menu_message(message: Message) -> None:
     from ..keyboards import monitoring_mode_reply_keyboard
     from ...scheduler import monitoring_scheduler
+    from ...scheduler.daemons import monitoring_daemon
+    from ..utils.formatters import format_next_run_text
+
     monitoring_enabled = (await db.get_setting("monitoring_mode", "false")) == "true"
     interval = int(await db.get_setting("monitoring_interval", "30"))
     jitter = int(await db.get_setting("monitoring_jitter", "0"))
@@ -205,14 +208,16 @@ async def _monitoring_menu_message(message: Message) -> None:
     tz_offset = int(await db.get_setting("monitoring_timezone_offset", "3"))
 
     run_status = "РАБОТАЕТ" if monitoring_scheduler._run_state.value == "running" else "ОЖИДАНИЕ"
-    
+    next_run_text = format_next_run_text(monitoring_daemon, monitoring_enabled)
+
     text = (
         f"🔍 <b>Режим авто-мониторинга</b>\n\n"
         f"Фоновый запуск: {'<b>АКТИВЕН</b> 🟢' if monitoring_enabled else '<b>ВЫКЛЮЧЕН</b> 🔴'}\n"
         f"Интервал проверки: <b>Каждые {interval} минут</b>\n"
         f"Случайный сдвиг (Рандом): <b>{jitter if jitter > 0 else 'Выключен'} мин</b>\n"
         f"Время работы: <b>{prime_time}</b> (по UTC{'+' if tz_offset >= 0 else ''}{tz_offset})\n"
-        f"Текущая сессия поиска: <b>{run_status}</b>\n\n"
+        f"Текущая сессия поиска: <b>{run_status}</b>\n"
+        f"{next_run_text}\n"
         f"Бот автоматически отслеживает и откликается только на новые вакансии, опубликованные с момента запуска мониторинга."
     )
     await message.answer(
@@ -243,6 +248,7 @@ async def enable_monitoring_message(message: Message) -> None:
     if not await _check_access(message.from_user.id):
         return
     await db.set_setting("monitoring_mode", "true")
+    await db.set_setting("monitoring_next_run", "")
     from ...services.flow_entity import get_active_flow_id
     flow_id = await get_active_flow_id()
     if flow_id:
@@ -301,6 +307,7 @@ async def disable_monitoring_message(message: Message) -> None:
     if not await _check_access(message.from_user.id):
         return
     await db.set_setting("monitoring_mode", "false")
+    await db.set_setting("monitoring_next_run", "")
     
     from ...scheduler import monitoring_scheduler, RunState, stop_monitoring_daemon
     if monitoring_scheduler._run_state != RunState.IDLE:
