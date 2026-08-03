@@ -322,3 +322,106 @@ async def set_timezone_callback(callback: CallbackQuery) -> None:
         reply_markup=settings_keyboard(gemini_model, hh_ok, tz_offset=new_val),
     )
 
+
+async def _resume_update_menu_message(message: Message) -> None:
+    from ... import database as db
+    from ..keyboards import resume_update_mode_reply_keyboard
+    
+    enabled = (await db.get_setting("resume_auto_update", "false")) == "true"
+    interval = int(await db.get_setting("resume_update_interval", "240"))
+    jitter = int(await db.get_setting("resume_update_jitter", "15"))
+    prime_time = await db.get_setting("resume_update_prime_time", "24/7")
+    tz_offset = int(await db.get_setting("monitoring_timezone_offset", "3"))
+
+    text = (
+        f"🚀 <b>Автоматическое поднятие резюме</b>\n\n"
+        f"Статус: {'<b>АКТИВЕН</b> 🟢' if enabled else '<b>ВЫКЛЮЧЕН</b> 🔴'}\n"
+        f"Интервал: <b>Раз в {interval} минут</b> (минимум 240м / 4ч)\n"
+        f"Случайный сдвиг (Рандом): <b>{jitter if jitter > 0 else 'Выключен'} мин</b>\n"
+        f"Время работы: <b>{prime_time}</b> (по UTC{'+' if tz_offset >= 0 else ''}{tz_offset})\n\n"
+        f"Бот будет автоматически обновлять дату публикации резюме, выбранного в активном Потоке (Flow)."
+    )
+    await message.answer(
+        text,
+        parse_mode="HTML",
+        reply_markup=resume_update_mode_reply_keyboard(
+            enabled, interval=interval, jitter=jitter, prime_time=prime_time
+        )
+    )
+
+
+@settings_router.message(F.text == "🚀 Поднятие резюме")
+async def resume_update_menu_handler(message: Message) -> None:
+    if not await _check_access(message.from_user.id):
+        return
+    await _resume_update_menu_message(message)
+
+
+@settings_router.message(F.text == "🟢 Включить автоподнятие")
+async def enable_resume_update_handler(message: Message) -> None:
+    if not await _check_access(message.from_user.id):
+        return
+    from ... import database as db
+    await db.set_setting("resume_auto_update", "true")
+    # Reset last update timestamp to force immediate run or standard timer run
+    from ...services.flow_entity import get_active_flow
+    flow = await get_active_flow()
+    if flow and flow.config.resume_id:
+        await db.set_setting(f"last_resume_update_time_{flow.config.resume_id}", "")
+    await message.answer("🟢 Автоподнятие резюме <b>включено</b>.", parse_mode="HTML")
+    await _resume_update_menu_message(message)
+
+
+@settings_router.message(F.text == "🔴 Выключить автоподнятие")
+async def disable_resume_update_handler(message: Message) -> None:
+    if not await _check_access(message.from_user.id):
+        return
+    from ... import database as db
+    await db.set_setting("resume_auto_update", "false")
+    await message.answer("🔴 Автоподнятие резюме <b>выключено</b>.", parse_mode="HTML")
+    await _resume_update_menu_message(message)
+
+
+@settings_router.message(F.text.startswith("⏱ Интервал поднятия:"))
+async def toggle_resume_update_interval(message: Message) -> None:
+    if not await _check_access(message.from_user.id):
+        return
+    from ... import database as db
+    current = int(await db.get_setting("resume_update_interval", "240"))
+    intervals = [240, 360, 480, 720, 1440]
+    next_idx = (intervals.index(current) + 1) % len(intervals) if current in intervals else 0
+    new_val = intervals[next_idx]
+    await db.set_setting("resume_update_interval", str(new_val))
+    await message.answer(f"⏱ Интервал поднятия изменен на <b>{new_val} минут</b> ({new_val // 60} ч).", parse_mode="HTML")
+    await _resume_update_menu_message(message)
+
+
+@settings_router.message(F.text.startswith("🎲 Рандом поднятия:"))
+async def toggle_resume_update_jitter(message: Message) -> None:
+    if not await _check_access(message.from_user.id):
+        return
+    from ... import database as db
+    current = int(await db.get_setting("resume_update_jitter", "15"))
+    jitters = [0, 5, 10, 15, 30]
+    next_idx = (jitters.index(current) + 1) % len(jitters) if current in jitters else 0
+    new_val = jitters[next_idx]
+    await db.set_setting("resume_update_jitter", str(new_val))
+    label = f"{new_val} минут" if new_val > 0 else "Выключен"
+    await message.answer(f"🎲 Рандомный сдвиг изменен на: <b>{label}</b>.", parse_mode="HTML")
+    await _resume_update_menu_message(message)
+
+
+@settings_router.message(F.text.startswith("🕒 Время поднятия:"))
+async def toggle_resume_update_prime_time(message: Message) -> None:
+    if not await _check_access(message.from_user.id):
+        return
+    from ... import database as db
+    current = await db.get_setting("resume_update_prime_time", "24/7")
+    options = ["24/7", "08:00 - 20:00", "09:00 - 18:00", "10:00 - 22:00"]
+    next_idx = (options.index(current) + 1) % len(options) if current in options else 0
+    new_val = options[next_idx]
+    await db.set_setting("resume_update_prime_time", new_val)
+    await message.answer(f"🕒 Время работы автоподнятия изменено на: <b>{new_val}</b>.", parse_mode="HTML")
+    await _resume_update_menu_message(message)
+
+

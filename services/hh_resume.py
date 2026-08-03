@@ -243,3 +243,74 @@ async def fetch_resume_text(resume_id: str) -> str:
     except Exception as e:
         logger.error(f"Failed to fetch resume text: {e}")
         return ""
+
+
+async def publish_resume(resume_id: str) -> tuple[bool, str]:
+    """Navigate to the resume page on HH.ru and click the 'Update date' button."""
+    settings = get_settings()
+    if not settings.session_file.exists():
+        logger.warning("No session file, cannot publish resume")
+        return False, "Нет файла сессии"
+
+    try:
+        async with browser_manager.get_page(use_session=True) as page:
+            await page.goto("https://hh.ru/", wait_until="domcontentloaded", timeout=15000)
+            await asyncio.sleep(1)
+
+            url = f"https://hh.ru/resume/{resume_id}"
+            logger.info(f"Navigating to resume page to raise: {url}")
+            await page.goto(url, wait_until="networkidle", timeout=30000)
+            await asyncio.sleep(2)
+
+            has_captcha = await page.evaluate(
+                "() => { try { return document.title.toLowerCase().includes('captcha') || document.title.toLowerCase().includes('robot'); } catch(e) { return false; } }"
+            )
+            if has_captcha:
+                logger.warning("CAPTCHA detected on resume page during publish")
+                return False, "Обнаружена капча"
+
+            btn = page.locator('[data-qa="resume-update-button"]')
+            if await btn.count() > 0:
+                is_visible = await btn.is_visible()
+                if not is_visible:
+                    return False, "Кнопка поднятия найдена, но скрыта"
+
+                is_disabled = await btn.get_attribute("disabled")
+                if is_disabled is not None:
+                    return False, "Уже поднято (кнопка заблокирована)"
+
+                await btn.click()
+                logger.info(f"Clicked raise button for resume {resume_id}")
+                await asyncio.sleep(3)
+
+                is_disabled_after = await btn.get_attribute("disabled")
+                if is_disabled_after is not None or "обновлено" in (await btn.inner_text()).lower():
+                    return True, "Успешно поднято"
+
+                content = await page.content()
+                if "вы сможете обновить" in content.lower() or "можно обновить через" in content.lower():
+                    return True, "Успешно поднято"
+
+                return True, "Кнопка нажата"
+            else:
+                content = await page.content()
+                if "вы сможете обновить" in content.lower() or "можно обновить через" in content.lower():
+                    return False, "Уже поднято ранее"
+
+                buttons = page.locator('button')
+                for i in range(await buttons.count()):
+                    btn_text = await buttons.nth(i).inner_text()
+                    if "обновить" in btn_text.lower():
+                        is_disabled = await buttons.nth(i).get_attribute("disabled")
+                        if is_disabled is not None:
+                            return False, "Уже поднято (кнопка заблокирована)"
+                        await buttons.nth(i).click()
+                        await asyncio.sleep(3)
+                        return True, "Кнопка поднятия найдена по тексту и нажата"
+
+                return False, "Кнопка поднятия не найдена"
+
+    except Exception as e:
+        logger.error(f"Failed to raise resume {resume_id}: {e}", exc_info=True)
+        return False, f"Ошибка: {str(e)}"
+

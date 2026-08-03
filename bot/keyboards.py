@@ -243,11 +243,24 @@ def settings_reply_keyboard(hh_linked: bool, tz_offset: int = 3) -> ReplyKeyboar
     tz_button = KeyboardButton(text=f"🌐 Часовой пояс: UTC{'+' if tz_offset >= 0 else ''}{tz_offset}")
     keyboard = [
         [KeyboardButton(text="🤖 Выбрать модель Gemini"), hh_button],
-        [tz_button, KeyboardButton(text="🔔 Уведомления")],
-        [KeyboardButton(text="🧹 Очистить кэш"), KeyboardButton(text="🔄 Сбросить лимиты")],
-        [KeyboardButton(text="⬅️ Главное меню")]
+        [tz_button, KeyboardButton(text="🚀 Поднятие резюме")],
+        [KeyboardButton(text="🔔 Уведомления"), KeyboardButton(text="🧹 Очистить кэш")],
+        [KeyboardButton(text="🔄 Сбросить лимиты"), KeyboardButton(text="⬅️ Главное меню")]
     ]
     return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
+
+
+def resume_update_mode_reply_keyboard(enabled: bool, interval: int = 240, jitter: int = 15, prime_time: str = "24/7") -> ReplyKeyboardMarkup:
+    toggle_btn = KeyboardButton(text="🔴 Выключить автоподнятие") if enabled else KeyboardButton(text="🟢 Включить автоподнятие")
+    pt_text = f"🕒 Время поднятия: {prime_time}"
+    jitter_text = f"🎲 Рандом поднятия: {jitter}м" if jitter > 0 else "🎲 Рандом поднятия: Выкл"
+    return ReplyKeyboardMarkup(keyboard=[
+        [toggle_btn],
+        [KeyboardButton(text=f"⏱ Интервал поднятия: {interval}м"), KeyboardButton(text=jitter_text)],
+        [KeyboardButton(text=pt_text)],
+        [KeyboardButton(text="⬅️ Назад в Настройки")]
+    ], resize_keyboard=True)
+
 
 
 def notifications_keyboard(success: bool, error: bool, skip: bool) -> InlineKeyboardMarkup:
