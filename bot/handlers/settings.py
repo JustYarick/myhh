@@ -368,6 +368,10 @@ async def enable_resume_update_handler(message: Message) -> None:
     flow = await get_active_flow()
     if flow and flow.config.resume_id:
         await db.set_setting(f"last_resume_update_time_{flow.config.resume_id}", "")
+        
+    from ...scheduler import trigger_resume_update
+    trigger_resume_update()
+    
     await message.answer("🟢 Автоподнятие резюме <b>включено</b>.", parse_mode="HTML")
     await _resume_update_menu_message(message)
 

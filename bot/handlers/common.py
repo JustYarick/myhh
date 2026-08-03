@@ -248,6 +248,9 @@ async def enable_monitoring_message(message: Message) -> None:
     if flow_id:
         await db.set_setting(f"last_newest_vacancy_{flow_id}", "")
     
+    from ...scheduler import trigger_monitoring
+    trigger_monitoring()
+    
     await message.answer("✅ Мониторинг вакансий <b>включен</b>. Устанавливаю базовую точку отсчета свежих вакансий...", parse_mode="HTML")
     await _monitoring_menu_message(message)
 

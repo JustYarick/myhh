@@ -925,53 +925,103 @@ monitoring_scheduler = Scheduler(name="Monitoring")
 monitoring_daemon_task: Optional[asyncio.Task] = None
 resume_updater_daemon_task: Optional[asyncio.Task] = None
 
+_monitoring_lock = asyncio.Lock()
+_resume_lock = asyncio.Lock()
+
+
+async def start_monitoring_daemon() -> None:
+    async with _monitoring_lock:
+        global monitoring_daemon_task
+        if monitoring_daemon_task is None or monitoring_daemon_task.done():
+            monitoring_daemon_task = asyncio.create_task(monitoring_daemon_loop())
+            logger.info("Monitoring daemon task started")
+
+
+async def stop_monitoring_daemon() -> None:
+    async with _monitoring_lock:
+        global monitoring_daemon_task
+        if monitoring_daemon_task is not None:
+            if not monitoring_daemon_task.done():
+                monitoring_daemon_task.cancel()
+                try:
+                    await monitoring_daemon_task
+                except asyncio.CancelledError:
+                    pass
+            logger.info("Monitoring daemon task stopped/cancelled")
+            monitoring_daemon_task = None
+
+
+async def start_resume_updater_daemon() -> None:
+    async with _resume_lock:
+        global resume_updater_daemon_task
+        if resume_updater_daemon_task is None or resume_updater_daemon_task.done():
+            resume_updater_daemon_task = asyncio.create_task(resume_updater_daemon_loop())
+            logger.info("Resume updater daemon task started")
+
+
+async def stop_resume_updater_daemon() -> None:
+    async with _resume_lock:
+        global resume_updater_daemon_task
+        if resume_updater_daemon_task is not None:
+            if not resume_updater_daemon_task.done():
+                resume_updater_daemon_task.cancel()
+                try:
+                    await resume_updater_daemon_task
+                except asyncio.CancelledError:
+                    pass
+            logger.info("Resume updater daemon task stopped/cancelled")
+            resume_updater_daemon_task = None
+
 
 async def resume_updater_daemon_loop() -> None:
-    from datetime import datetime, timedelta, timezone
-    import re
+    from datetime import datetime, timezone
     import random
 
-    logger.info("Background resume updater daemon loop started")
-    while True:
-        try:
-            await asyncio.sleep(60)  # check conditions every 1 minute
-            enabled = (await db.get_setting("resume_auto_update", "false")) == "true"
-            if not enabled:
-                continue
-
-            settings = get_settings()
-            if not settings.session_file.exists():
-                continue
-
-            flow = await get_active_flow()
-            if not flow or not flow.config.resume_id:
-                continue
-
+    logger.info("Background resume updater daemon loop running")
+    try:
+        # First iteration: run IMMEDIATELY
+        settings = get_settings()
+        flow = await get_active_flow()
+        if settings.session_file.exists() and flow and flow.config.resume_id:
             resume_id = flow.config.resume_id
-            last_update_str = await db.get_setting(f"last_resume_update_time_{resume_id}", "")
-            
-            now = datetime.now()
-            if last_update_str:
-                try:
-                    last_update = datetime.fromisoformat(last_update_str)
-                except ValueError:
-                    last_update = datetime.min
-                
-                interval_mins = int(await db.get_setting("resume_update_interval", "240"))
-                if interval_mins < 240:
-                    interval_mins = 240
-                
-                next_update = last_update + timedelta(minutes=interval_mins)
-                if now < next_update:
-                    continue
+            logger.info(f"Resume auto-updater: raising resume {resume_id} immediately on startup/activation")
+            if monitoring_scheduler._notify_callback:
+                await monitoring_scheduler._notify(f"⏳ Начинаю автоматическое поднятие резюме <code>{resume_id}</code>...")
 
-            # 1. Check Prime Time
+            success, msg = await hh_auth.publish_resume(resume_id)
+            if success:
+                await db.set_setting(f"last_resume_update_time_{resume_id}", datetime.now().isoformat())
+                logger.info(f"Resume {resume_id} auto-raised successfully: {msg}")
+                await monitoring_scheduler._notify(f"✅ Резюме успешно поднято: {msg}", "success")
+            else:
+                if "уже поднято" in msg.lower() or "заблокирована" in msg.lower():
+                    await db.set_setting(f"last_resume_update_time_{resume_id}", datetime.now().isoformat())
+                    logger.info(f"Resume {resume_id} was already raised: {msg}. Setting last raise timestamp to now.")
+                    await monitoring_scheduler._notify(f"ℹ️ Резюме: {msg}", "info")
+                else:
+                    logger.warning(f"Failed to auto-raise resume {resume_id}: {msg}")
+                    await monitoring_scheduler._notify(f"⚠️ Ошибка автоподнятия резюме: {msg}", "error")
+
+        while True:
+            interval_mins = int(await db.get_setting("resume_update_interval", "240"))
+            if interval_mins < 240:
+                interval_mins = 240
+            
+            jitter = int(await db.get_setting("resume_update_jitter", "15"))
+            jitter_secs = random.randint(0, jitter * 60) if jitter > 0 else 0
+            
+            total_wait_secs = (interval_mins * 60) + jitter_secs
+            logger.info(f"Resume auto-updater: sleeping for {total_wait_secs} seconds until next run")
+            await asyncio.sleep(total_wait_secs)
+
+            # Check Prime Time
             prime_time = await db.get_setting("resume_update_prime_time", "24/7")
             if prime_time != "24/7":
-                tz_offset = int(await db.get_setting("resume_update_timezone_offset", "3"))
+                tz_offset = int(await db.get_setting("monitoring_timezone_offset", "3"))
                 user_time = datetime.now(timezone.utc) + timedelta(hours=tz_offset)
                 current_hour = user_time.hour
                 
+                import re
                 match = re.search(r"(\d{2}):\d{2}\s*-\s*(\d{2}):\d{2}", prime_time)
                 if match:
                     start_h = int(match.group(1))
@@ -986,146 +1036,81 @@ async def resume_updater_daemon_loop() -> None:
                         logger.info(f"Resume auto-update skipped: current hour {current_hour:02d}:00 is outside prime time ({prime_time})")
                         continue
 
-            # 2. Handle Jitter
-            jitter = int(await db.get_setting("resume_update_jitter", "15"))
-            if jitter > 0:
-                saved_jitter = await db.get_setting("resume_update_next_jitter", "")
-                if saved_jitter:
-                    try:
-                        delay_secs = int(saved_jitter)
-                    except ValueError:
-                        delay_secs = random.randint(0, jitter * 60)
-                    await db.set_setting("resume_update_next_jitter", "")
-                else:
-                    delay_secs = random.randint(0, jitter * 60)
-                logger.info(f"Resume auto-update jitter delay: sleeping for {delay_secs} seconds")
-                for _ in range(delay_secs // 5):
-                    await asyncio.sleep(5)
-                    enabled = (await db.get_setting("resume_auto_update", "false")) == "true"
-                    if not enabled:
-                        break
-                if not enabled:
-                    continue
+            flow = await get_active_flow()
+            if flow and flow.config.resume_id:
+                resume_id = flow.config.resume_id
+                logger.info(f"Resume auto-updater: raising resume {resume_id}")
+                if monitoring_scheduler._notify_callback:
+                    await monitoring_scheduler._notify(f"⏳ Начинаю автоматическое поднятие резюме <code>{resume_id}</code>...")
 
-            logger.info(f"Resume auto-updater: raising resume {resume_id}")
-            if monitoring_scheduler._notify_callback:
-                await monitoring_scheduler._notify(f"⏳ Начинаю автоматическое поднятие резюме <code>{resume_id}</code>...")
-
-            success, msg = await hh_auth.publish_resume(resume_id)
-            
-            if success:
-                await db.set_setting(f"last_resume_update_time_{resume_id}", datetime.now().isoformat())
-                logger.info(f"Resume {resume_id} auto-raised successfully: {msg}")
-                await monitoring_scheduler._notify(f"✅ Резюме успешно поднято: {msg}", "success")
-            else:
-                if "уже поднято" in msg.lower() or "заблокирована" in msg.lower():
+                success, msg = await hh_auth.publish_resume(resume_id)
+                if success:
                     await db.set_setting(f"last_resume_update_time_{resume_id}", datetime.now().isoformat())
-                    logger.info(f"Resume {resume_id} was already raised: {msg}. Setting last raise timestamp to now.")
-                    await monitoring_scheduler._notify(f"ℹ️ Резюме: {msg}", "info")
+                    logger.info(f"Resume {resume_id} auto-raised successfully: {msg}")
+                    await monitoring_scheduler._notify(f"✅ Резюме успешно поднято: {msg}", "success")
                 else:
-                    logger.warning(f"Failed to auto-raise resume {resume_id}: {msg}")
-                    await monitoring_scheduler._notify(f"⚠️ Ошибка автоподнятия резюме: {msg}", "error")
+                    if "уже поднято" in msg.lower() or "заблокирована" in msg.lower():
+                        await db.set_setting(f"last_resume_update_time_{resume_id}", datetime.now().isoformat())
+                        logger.info(f"Resume {resume_id} was already raised: {msg}. Setting last raise timestamp to now.")
+                        await monitoring_scheduler._notify(f"ℹ️ Резюме: {msg}", "info")
+                    else:
+                        logger.warning(f"Failed to auto-raise resume {resume_id}: {msg}")
+                        await monitoring_scheduler._notify(f"⚠️ Ошибка автоподнятия резюме: {msg}", "error")
 
-            await asyncio.sleep(60)
-
-        except Exception as e:
-            logger.error(f"Error in resume updater daemon loop: {e}", exc_info=True)
-            await asyncio.sleep(60)
+    except asyncio.CancelledError:
+        logger.info("Resume updater daemon loop cancelled")
+        raise
+    except Exception as e:
+        logger.error(f"Error in resume updater daemon loop: {e}", exc_info=True)
 
 
 async def monitoring_daemon_loop() -> None:
-    logger.info("Background monitoring daemon loop started")
-    while True:
-        try:
-            await asyncio.sleep(60)  # check conditions every 1 minute
-            enabled = (await db.get_setting("monitoring_mode", "false")) == "true"
-            if not enabled:
-                continue
-            
-            if monitoring_scheduler._run_state == RunState.IDLE:
-                settings = get_settings()
-                if not settings.session_file.exists():
-                    continue
-                
-                flow = await get_active_flow()
-                if not flow:
-                    continue
-
-                last_newest_url = await db.get_setting(f"last_newest_vacancy_{flow.id}", "")
-
-                # 1. Check Prime Time and Timezone
-                prime_time = await db.get_setting("monitoring_prime_time", "24/7")
-                if prime_time != "24/7" and last_newest_url:
-                    tz_offset = int(await db.get_setting("monitoring_timezone_offset", "3"))
-                    # Calculate current hour in user's timezone
-                    from datetime import datetime, timedelta, timezone
-                    import re
-                    user_time = datetime.now(timezone.utc) + timedelta(hours=tz_offset)
-                    current_hour = user_time.hour
-                    
-                    # Parse prime_time format, e.g. "08:00 - 20:00"
-                    match = re.search(r"(\d{2}):\d{2}\s*-\s*(\d{2}):\d{2}", prime_time)
-                    if match:
-                        start_h = int(match.group(1))
-                        end_h = int(match.group(2))
-                        # Check if inside range (handles overnight intervals like 22:00 - 06:00 too!)
-                        is_inside = False
-                        if start_h <= end_h:
-                            is_inside = start_h <= current_hour < end_h
-                        else:
-                            is_inside = current_hour >= start_h or current_hour < end_h
-                            
-                        if not is_inside:
-                            logger.info(f"Monitoring skipped: current hour {current_hour:02d}:00 is outside prime time ({prime_time})")
-                            continue
-
-                # 2. Handle Jitter (Random delay before starting)
-                # Skip Jitter delay entirely if there is no baseline set yet (so baseline is established immediately)
-                jitter = int(await db.get_setting("monitoring_jitter", "0"))
-                if jitter > 0 and last_newest_url:
-                    saved_jitter = await db.get_setting("monitoring_next_jitter", "")
-                    if saved_jitter:
-                        delay_secs = int(saved_jitter)
-                        # Clear it so it is not reused next time
-                        await db.set_setting("monitoring_next_jitter", "")
-                    else:
-                        import random
-                        delay_secs = random.randint(0, jitter * 60)
-                    logger.info(f"Jitter delay: sleeping for {delay_secs} seconds before starting monitoring run")
-                    # Check enabled status while sleeping in jitter
-                    for _ in range(delay_secs // 5):
-                        await asyncio.sleep(5)
-                        enabled = (await db.get_setting("monitoring_mode", "false")) == "true"
-                        if not enabled:
-                            break
-                    if not enabled:
-                        continue
-                
-                logger.info("Monitoring daemon: triggering active flow apply")
+    import random
+    logger.info("Background monitoring daemon loop running")
+    try:
+        # First iteration: run IMMEDIATELY
+        if monitoring_scheduler._run_state == RunState.IDLE:
+            flow = await get_active_flow()
+            if flow:
+                logger.info("Monitoring daemon: triggering active flow apply immediately on startup/activation")
                 await monitoring_scheduler.start()
-                
-                # Wait for it to complete
                 while monitoring_scheduler._run_state == RunState.RUNNING:
                     await asyncio.sleep(5)
-                
-                interval_mins = int(await db.get_setting("monitoring_interval", "30"))
-                logger.info(f"Monitoring daemon run completed. Sleeping for {interval_mins} minutes.")
-                # Loop interval_mins * 6 times with 10s sleep to check enabling status frequently
-                for _ in range(interval_mins * 6):
-                    await asyncio.sleep(10)
-                    enabled = (await db.get_setting("monitoring_mode", "false")) == "true"
-                    if not enabled:
-                        break
-        except Exception as e:
-            logger.error(f"Error in monitoring daemon loop: {e}", exc_info=True)
-            await asyncio.sleep(60)
+
+        while True:
+            interval_mins = int(await db.get_setting("monitoring_interval", "30"))
+            jitter = int(await db.get_setting("monitoring_jitter", "0"))
+            jitter_secs = random.randint(0, jitter * 60) if jitter > 0 else 0
+            total_wait_secs = (interval_mins * 60) + jitter_secs
+
+            logger.info(f"Monitoring daemon run completed. Sleeping for {total_wait_secs} seconds.")
+            await asyncio.sleep(total_wait_secs)
+
+            if monitoring_scheduler._run_state == RunState.IDLE:
+                flow = await get_active_flow()
+                if flow:
+                    logger.info("Monitoring daemon: triggering active flow apply")
+                    await monitoring_scheduler.start()
+                    while monitoring_scheduler._run_state == RunState.RUNNING:
+                        await asyncio.sleep(5)
+    except asyncio.CancelledError:
+        logger.info("Monitoring daemon loop cancelled")
+        raise
+    except Exception as e:
+        logger.error(f"Error in monitoring daemon loop: {e}", exc_info=True)
 
 
 def set_notify_callback(callback: Callable[[str], Awaitable[None]]) -> None:
-    global monitoring_daemon_task, resume_updater_daemon_task
     manual_scheduler.set_notify_callback(callback)
     monitoring_scheduler.set_notify_callback(callback)
-    if monitoring_daemon_task is None:
-        monitoring_daemon_task = asyncio.create_task(monitoring_daemon_loop())
-    if resume_updater_daemon_task is None:
-        resume_updater_daemon_task = asyncio.create_task(resume_updater_daemon_loop())
+    
+    async def restore_daemons():
+        monitoring_enabled = (await db.get_setting("monitoring_mode", "false")) == "true"
+        if monitoring_enabled:
+            await start_monitoring_daemon()
+            
+        resume_enabled = (await db.get_setting("resume_auto_update", "false")) == "true"
+        if resume_enabled:
+            await start_resume_updater_daemon()
+            
+    asyncio.create_task(restore_daemons())
