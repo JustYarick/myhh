@@ -5,7 +5,7 @@ async def format_next_run_text(db_key: str, is_enabled: bool) -> str:
     if not is_enabled:
         return ""
         
-    from .. import database as db
+    from ... import database as db
     next_run_str = await db.get_setting(db_key, "")
     if not next_run_str:
         return ""
