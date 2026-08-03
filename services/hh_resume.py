@@ -259,8 +259,11 @@ async def publish_resume(resume_id: str) -> tuple[bool, str]:
 
             url = f"https://hh.ru/resume/{resume_id}"
             logger.info(f"Navigating to resume page to raise: {url}")
-            await page.goto(url, wait_until="networkidle", timeout=30000)
-            await asyncio.sleep(2)
+            try:
+                await page.goto(url, wait_until="domcontentloaded", timeout=30000)
+            except Exception as navigation_err:
+                logger.warning(f"Navigation warning (non-fatal): {navigation_err}")
+            await asyncio.sleep(3)
 
             has_captcha = await page.evaluate(
                 "() => { try { return document.title.toLowerCase().includes('captcha') || document.title.toLowerCase().includes('robot'); } catch(e) { return false; } }"
