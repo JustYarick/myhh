@@ -248,8 +248,8 @@ async def enable_monitoring_message(message: Message) -> None:
     if flow_id:
         await db.set_setting(f"last_newest_vacancy_{flow_id}", "")
     
-    from ...scheduler import trigger_monitoring
-    trigger_monitoring()
+    from ...scheduler import start_monitoring_daemon
+    await start_monitoring_daemon()
     
     await message.answer("✅ Мониторинг вакансий <b>включен</b>. Устанавливаю базовую точку отсчета свежих вакансий...", parse_mode="HTML")
     await _monitoring_menu_message(message)
@@ -302,9 +302,10 @@ async def disable_monitoring_message(message: Message) -> None:
         return
     await db.set_setting("monitoring_mode", "false")
     
-    from ...scheduler import monitoring_scheduler, RunState
+    from ...scheduler import monitoring_scheduler, RunState, stop_monitoring_daemon
     if monitoring_scheduler._run_state != RunState.IDLE:
         await monitoring_scheduler.stop()
+    await stop_monitoring_daemon()
         
     await message.answer("❌ Мониторинг вакансий <b>выключен</b> (активная сессия остановлена).", parse_mode="HTML")
     await _monitoring_menu_message(message)

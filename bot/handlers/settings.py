@@ -369,8 +369,8 @@ async def enable_resume_update_handler(message: Message) -> None:
     if flow and flow.config.resume_id:
         await db.set_setting(f"last_resume_update_time_{flow.config.resume_id}", "")
         
-    from ...scheduler import trigger_resume_update
-    trigger_resume_update()
+    from ...scheduler import start_resume_updater_daemon
+    await start_resume_updater_daemon()
     
     await message.answer("🟢 Автоподнятие резюме <b>включено</b>.", parse_mode="HTML")
     await _resume_update_menu_message(message)
@@ -382,6 +382,8 @@ async def disable_resume_update_handler(message: Message) -> None:
         return
     from ... import database as db
     await db.set_setting("resume_auto_update", "false")
+    from ...scheduler import stop_resume_updater_daemon
+    await stop_resume_updater_daemon()
     await message.answer("🔴 Автоподнятие резюме <b>выключено</b>.", parse_mode="HTML")
     await _resume_update_menu_message(message)
 
