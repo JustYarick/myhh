@@ -42,6 +42,15 @@ DEFAULT_ANALYSIS_PROMPT = (
     "apply=true только если relevance>=4 и requires_test=false."
 )
 
+# Delays in seconds between retry attempts: 5 min → 10 min → 30 min
+_RETRY_DELAYS = [5 * 60, 10 * 60, 30 * 60]
+
+
+def _is_transient_error(e: Exception) -> bool:
+    """Returns True if the error is a transient API error worth retrying."""
+    msg = str(e).lower()
+    return any(code in msg for code in ["503", "429", "unavailable", "resource_exhausted", "rate limit", "quota"])
+
 
 def _get_proxy_url() -> str | None:
     settings = get_settings()
@@ -59,7 +68,7 @@ async def list_models(api_key: str) -> list[dict]:
     proxy = _get_proxy_url()
     url = "https://generativelanguage.googleapis.com/v1beta/models"
     try:
-        client_kwargs = {"timeout": 30}
+        client_kwargs: dict = {"timeout": 30}
         if proxy:
             client_kwargs["proxy"] = proxy
         async with httpx.AsyncClient(**client_kwargs) as client:
@@ -100,7 +109,6 @@ class GeminiService:
             api_key = settings.gemini_api_key
             if not api_key:
                 raise ValueError("GEMINI_API_KEY not configured")
-            proxy = _get_proxy_url()
             http_client = _build_http_client()
             self._client = genai.Client(
                 api_key=api_key,
@@ -114,6 +122,44 @@ class GeminiService:
             **kwargs,
         )
 
+    async def _call_with_retry(self, prompt: str) -> str:
+        """
+        Calls generate_content with exponential backoff on transient errors (503/429).
+        Retry schedule: 5 min → 10 min → 30 min.
+        Raises the last exception if all retries are exhausted.
+        """
+        last_exc: Exception | None = None
+        delays = [0] + _RETRY_DELAYS  # first attempt has no delay
+
+        for attempt, delay in enumerate(delays, start=1):
+            if delay > 0:
+                logger.warning(
+                    f"[GEMINI] Retrying in {delay // 60} min "
+                    f"(attempt {attempt}/{len(delays)})..."
+                )
+                await asyncio.sleep(delay)
+            try:
+                client = self._get_client()
+                loop = asyncio.get_event_loop()
+                response = await loop.run_in_executor(
+                    None,
+                    lambda: client.models.generate_content(
+                        model=self._model,
+                        contents=prompt,
+                        config=self._no_afc_config(),
+                    ),
+                )
+                return response.text.strip()
+            except Exception as e:
+                last_exc = e
+                if _is_transient_error(e):
+                    logger.warning(f"[GEMINI] Transient error (attempt {attempt}): {e}")
+                    continue  # retry after delay
+                # Non-transient error — fail immediately
+                raise
+
+        raise last_exc  # type: ignore[misc]
+
     async def generate_cover_letter(
         self, vacancy: dict, prompt_template: str = "", resume_text: str = ""
     ) -> str:
@@ -122,7 +168,9 @@ class GeminiService:
                 "========== START OF USER CUSTOM INSTRUCTIONS (HIGHEST PRIORITY) ==========\n"
                 f"{prompt_template}\n"
                 "========== END OF USER CUSTOM INSTRUCTIONS ==========\n\n"
-                "SYSTEM DIRECTIVE: You MUST follow the instructions inside the 'USER CUSTOM INSTRUCTIONS' block with the highest priority and weight. If they contradict any other rules, the user custom instructions override them."
+                "SYSTEM DIRECTIVE: You MUST follow the instructions inside the 'USER CUSTOM INSTRUCTIONS' block "
+                "with the highest priority and weight. If they contradict any other rules, the user custom "
+                "instructions override them."
             )
         else:
             template = DEFAULT_COVER_PROMPT
@@ -136,28 +184,21 @@ class GeminiService:
             resume=resume_text if resume_text else "No resume provided",
         )
 
-        logger.info(f"[GEMINI] Cover letter request | model={self._model} | resume_len={len(resume_text)} | vacancy={vacancy.get('title', '?')}")
+        logger.info(
+            f"[GEMINI] Cover letter request | model={self._model} | "
+            f"resume_len={len(resume_text)} | vacancy={vacancy.get('title', '?')}"
+        )
         logger.info(f"[GEMINI] Cover letter FULL prompt:\n{'='*60}\n{prompt}\n{'='*60}")
 
         try:
-            client = self._get_client()
-            loop = asyncio.get_event_loop()
-            response = await loop.run_in_executor(
-                None,
-                lambda: client.models.generate_content(
-                    model=self._model,
-                    contents=prompt,
-                    config=self._no_afc_config(),
-                ),
-            )
-            text = response.text.strip()
+            text = await self._call_with_retry(prompt)
             logger.info(f"[GEMINI] Cover letter FULL response:\n{'='*60}\n{text}\n{'='*60}")
             text = re.sub(r'^["\']|["\']$', "", text)
             text = re.sub(r"\n{3,}", "\n\n", text)
             return text[:1000]
         except Exception as e:
-            logger.error(f"Cover letter generation failed: {e}")
-            return ""
+            logger.error(f"Cover letter generation failed after all retries: {e}")
+            return ""  # Empty string → caller will block the apply
 
     async def analyze_vacancy(
         self, vacancy: dict, prompt_template: str = "", resume_text: str = ""
@@ -167,7 +208,9 @@ class GeminiService:
                 "========== START OF USER CUSTOM INSTRUCTIONS (HIGHEST PRIORITY) ==========\n"
                 f"{prompt_template}\n"
                 "========== END OF USER CUSTOM INSTRUCTIONS ==========\n\n"
-                "SYSTEM DIRECTIVE: You MUST follow the instructions inside the 'USER CUSTOM INSTRUCTIONS' block with the highest priority and weight. If they contradict any other rules, the user custom instructions override them. "
+                "SYSTEM DIRECTIVE: You MUST follow the instructions inside the 'USER CUSTOM INSTRUCTIONS' block "
+                "with the highest priority and weight. If they contradict any other rules, the user custom "
+                "instructions override them. "
                 "You must still return the JSON structure as requested: relevance, salary_match, summary, apply, requires_test."
             )
         else:
@@ -184,21 +227,14 @@ class GeminiService:
             resume=resume_text if resume_text else "No resume provided",
         )
 
-        logger.info(f"[GEMINI] Analysis request | model={self._model} | resume_len={len(resume_text)} | vacancy={vacancy.get('title', '?')}")
+        logger.info(
+            f"[GEMINI] Analysis request | model={self._model} | "
+            f"resume_len={len(resume_text)} | vacancy={vacancy.get('title', '?')}"
+        )
         logger.info(f"[GEMINI] Analysis FULL prompt:\n{'='*60}\n{prompt}\n{'='*60}")
 
         try:
-            client = self._get_client()
-            loop = asyncio.get_event_loop()
-            response = await loop.run_in_executor(
-                None,
-                lambda: client.models.generate_content(
-                    model=self._model,
-                    contents=prompt,
-                    config=self._no_afc_config(),
-                ),
-            )
-            text = response.text.strip()
+            text = await self._call_with_retry(prompt)
             logger.info(f"[GEMINI] Analysis FULL response:\n{'='*60}\n{text}\n{'='*60}")
 
             json_match = re.search(r"\{[^}]+\}", text, re.DOTALL)
@@ -211,18 +247,24 @@ class GeminiService:
                     apply=data.get("apply", False),
                     requires_test=data.get("requires_test", False),
                 )
-                logger.info(f"[GEMINI] Analysis result: relevance={result.relevance} apply={result.apply} requires_test={result.requires_test} summary={result.summary[:100]}")
+                logger.info(
+                    f"[GEMINI] Analysis result: relevance={result.relevance} "
+                    f"apply={result.apply} requires_test={result.requires_test} "
+                    f"summary={result.summary[:100]}"
+                )
                 return result
             else:
-                logger.warning(f"Could not parse AI analysis: {text[:200]}")
-                return VacancyAnalysis(relevance=5, apply=True, summary="AI parse error")
+                logger.warning(f"Could not parse AI analysis response: {text[:200]}")
+                # Safe default: do NOT apply when we can't parse the response
+                return VacancyAnalysis(relevance=0, apply=False, summary="AI parse error — skipped")
 
         except json.JSONDecodeError as e:
             logger.error(f"JSON decode error in analysis: {e}")
-            return VacancyAnalysis(relevance=5, apply=True, summary="JSON parse error")
+            return VacancyAnalysis(relevance=0, apply=False, summary="JSON parse error — skipped")
         except Exception as e:
-            logger.error(f"Vacancy analysis failed: {e}")
-            return VacancyAnalysis(relevance=5, apply=True, summary=f"Error: {e}")
+            logger.error(f"Vacancy analysis failed after all retries: {e}")
+            # CRITICAL: never apply on API error — skip the vacancy safely
+            return VacancyAnalysis(relevance=0, apply=False, summary=f"API error — skipped: {str(e)[:50]}")
 
 
 gemini_service = GeminiService()
