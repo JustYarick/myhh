@@ -2,7 +2,6 @@ import logging
 from aiogram import Router
 
 from ...config import get_settings
-from ...services.hh_auth import hh_auth
 from ...services import flow_entity as flow_db
 
 logger = logging.getLogger(__name__)

@@ -7,7 +7,8 @@ from aiogram.fsm.state import State, StatesGroup
 
 from ...services import flow_entity as flow_db
 from ...services.flow_entity import FlowConfig
-from ...services.hh_auth import hh_auth
+from ...services.hh_resume import resume_service
+from ...services.hh_api_client import hh_api
 
 logger = logging.getLogger(__name__)
 flows_router = Router()
@@ -145,30 +146,28 @@ async def flow_test_message_handler(message: Message, state: FSMContext) -> None
         from ...services.anti_fraud import AntiFraud
         search_service = HHSearchService()
         af = AntiFraud(flow.config)
-        async with browser_manager.get_page(use_session=True) as page:
-            await search_service._go_to_search_page(page, flow.config.search_url, af)
-            cards = await search_service._parse_vacancy_cards(page)
-            if not cards:
-                await message.answer("❌ Вакансии на первой странице не найдены.")
-                return
-            await message.answer(f"📋 Найдено {len(cards)} вакансий на первой странице. Запуск AI оценки...")
-            sample = cards[:3]
-            for idx, c in enumerate(sample):
-                desc = await search_service.get_vacancy_description(page, c["url"])
-                from ...services import gemini_service
-                res = await gemini_service.analyze_vacancy(
-                    {"title": c["title"], "url": c["url"], "employer": c["employer"], "description": desc},
-                    prompt_template=flow.config.analysis_prompt,
-                    resume_text=flow.config.resume_text
-                )
-                await message.answer(
-                    f"📄 <b>{idx+1}/{len(sample)}</b>: <a href=\"{c['url']}\">{c['title']}</a>\n"
-                    f"🏢 {c['employer']}\n"
-                    f"📊 Релевантность: {res.relevance}/10 (Отклик: {'Да' if res.apply else 'Нет'})\n"
-                    f"💬 <i>{res.summary}</i>",
-                    parse_mode="HTML"
-                )
-            await message.answer("✅ Тестовый запуск успешно завершен.")
+        _, cards, _ = await search_service.search_cards(af, 0, flow.config.search_url)
+        if not cards:
+            await message.answer("❌ Вакансии на первой странице не найдены.")
+            return
+        await message.answer(f"📋 Найдено {len(cards)} вакансий на первой странице. Запуск AI оценки...")
+        sample = cards[:3]
+        for idx, c in enumerate(sample):
+            desc = await search_service.get_vacancy_description(None, c["url"])
+            from ...services import gemini_service
+            res = await gemini_service.analyze_vacancy(
+                {"title": c["title"], "url": c["url"], "employer": c["employer"], "description": desc},
+                prompt_template=flow.config.analysis_prompt,
+                resume_text=flow.config.resume_text
+            )
+            await message.answer(
+                f"📄 <b>{idx+1}/{len(sample)}</b>: <a href=\"{c['url']}\">{c['title']}</a>\n"
+                f"🏢 {c['employer']}\n"
+                f"📊 Релевантность: {res.relevance}/10 (Отклик: {'Да' if res.apply else 'Нет'})\n"
+                f"💬 <i>{res.summary}</i>",
+                parse_mode="HTML"
+            )
+        await message.answer("✅ Тестовый запуск успешно завершен.")
     except Exception as e:
         logger.error(f"Test run error: {e}", exc_info=True)
         await message.answer(f"❌ Ошибка тест-рана: {e}")
@@ -243,8 +242,7 @@ async def flow_set_resume_message_handler(message: Message, state: FSMContext) -
         await message.answer("Flow not found")
         return
     try:
-        from ...services.hh_auth import hh_auth
-        resumes = await hh_auth.get_resumes()
+        resumes = await resume_service.get_resumes()
         if not resumes:
             await message.answer("❌ На вашем HH аккаунте нет доступных резюме.")
             return
@@ -407,7 +405,7 @@ async def flow_test_callback(callback: CallbackQuery) -> None:
                 f"<b>Flow: {flow.name}</b>\n\n⏳ <i>Fetching resume text from HH.ru...</i>",
                 parse_mode="HTML"
             )
-            resume_text = await hh_auth.get_resume_text(flow.config.resume_id)
+            resume_text = await resume_service.fetch_resume_text(flow.config.resume_id)
             if resume_text:
                 flow.config.resume_text = resume_text
                 await flow_db.update_flow(flow_id, config=flow.config)
@@ -627,21 +625,15 @@ async def flow_refresh_count_callback(callback: CallbackQuery) -> None:
 
     count = 0
     success = False
-    from ...services.hh_search import search_service
-    from ...services.anti_fraud import AntiFraud
-    from ...services.browser import browser_manager
-    af = AntiFraud(flow.config)
+    from ...services.hh_api_client import hh_api
+    from ...services.hh_search import _url_to_api_params
     try:
-        async with browser_manager.get_page(use_session=True) as page:
-            await page.goto(flow.config.search_url, wait_until="commit", timeout=60000)
-            try:
-                await page.wait_for_load_state("domcontentloaded", timeout=15000)
-            except Exception:
-                pass
-            count = await search_service.get_vacancy_count(page)
-            flow.config.vacancy_count = count
-            await flow_db.update_flow(flow)
-            success = True
+        params = _url_to_api_params(flow.config.search_url, 0)
+        rv = await hh_api.search_vacancies(params)
+        count = rv.get("found", 0)
+        flow.config.vacancy_count = count
+        await flow_db.update_flow(flow)
+        success = True
     except Exception as e:
         logger.warning(f"Failed to fetch vacancy count: {e}")
 
@@ -673,7 +665,7 @@ async def flow_refresh_resume_callback(callback: CallbackQuery) -> None:
         parse_mode="HTML"
     )
 
-    text = await hh_auth.get_resume_text(flow.config.resume_id)
+    text = await resume_service.fetch_resume_text(flow.config.resume_id)
     success = False
     if text:
         flow.config.resume_text = text
@@ -706,13 +698,13 @@ async def flow_pick_resume_callback(callback: CallbackQuery) -> None:
         await callback.answer("Flow not found", show_alert=True)
         return
 
-    if not hh_auth.session_exists():
+    if not hh_api.is_authenticated:
         await callback.answer("Login to HH.ru first", show_alert=True)
         return
 
     await callback.message.edit_text("Loading resumes from HH.ru...")
 
-    resumes = await hh_auth.get_resumes()
+    resumes = await resume_service.get_resumes()
     if not resumes:
         await callback.message.edit_text(
             "No resumes found on your HH.ru account.\nCreate a resume on hh.ru first.",
@@ -760,7 +752,7 @@ async def flow_set_resume_callback(callback: CallbackQuery) -> None:
             f"<b>Flow: {flow.name}</b>\n\n⏳ <i>Fetching resume details from HH.ru...</i>",
             parse_mode="HTML"
         )
-        text = await hh_auth.get_resume_text(resume_id)
+        text = await resume_service.fetch_resume_text(resume_id)
         if text:
             flow.config.resume_text = text
             await flow_db.update_flow(flow_id, config=flow.config)
@@ -870,17 +862,11 @@ async def flow_field_value_handler(message: Message, state: FSMContext) -> None:
             flow.config.vacancy_count = 0
             await message.answer("⏳ Fetching vacancy count...")
             try:
-                from ...services.hh_search import search_service
-                from ...services.browser import browser_manager
-                from ...services.anti_fraud import AntiFraud
-                af = AntiFraud(flow.config)
-                async with browser_manager.get_page(use_session=True) as page:
-                    await page.goto(text, wait_until="commit", timeout=60000)
-                    try:
-                        await page.wait_for_load_state("domcontentloaded", timeout=15000)
-                    except Exception:
-                        pass
-                    flow.config.vacancy_count = await search_service.get_vacancy_count(page)
+                from ...services.hh_api_client import hh_api
+                from ...services.hh_search import _url_to_api_params
+                params = _url_to_api_params(text, 0)
+                rv = await hh_api.search_vacancies(params)
+                flow.config.vacancy_count = rv.get("found", 0)
             except Exception as e:
                 logger.warning(f"Failed to fetch vacancy count: {e}")
         await flow_db.update_flow(flow_id, config=flow.config)

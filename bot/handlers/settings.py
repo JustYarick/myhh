@@ -26,7 +26,8 @@ async def settings_callback(callback: CallbackQuery) -> None:
     from ...services.flow_entity import get_setting
     gemini_model = await get_setting("gemini_model", "gemini-2.0-flash")
     tz_offset = int(await get_setting("monitoring_timezone_offset", "3"))
-    hh_ok = hh_auth.session_exists()
+    from ...services.hh_api_client import hh_api
+    hh_ok = hh_api.is_authenticated
     from ..keyboards import settings_keyboard
     await callback.message.edit_text(
         "<b>Global Settings</b>",
@@ -77,7 +78,8 @@ async def settings_set_model_callback(callback: CallbackQuery) -> None:
     gemini_service.set_model(model)
     await callback.answer(f"Model set: {model}", show_alert=True)
     from ..keyboards import settings_keyboard
-    hh_ok = hh_auth.session_exists()
+    from ...services.hh_api_client import hh_api
+    hh_ok = hh_api.is_authenticated
     from ...services.flow_entity import get_setting
     gemini_model = await get_setting("gemini_model", "gemini-2.0-flash")
     tz_offset = int(await get_setting("monitoring_timezone_offset", "3"))
@@ -93,7 +95,8 @@ async def settings_hh_callback(callback: CallbackQuery) -> None:
     if not await _check_access(callback.from_user.id):
         return
     await callback.answer()
-    hh_ok = hh_auth.session_exists()
+    from ...services.hh_api_client import hh_api
+    hh_ok = hh_api.is_authenticated
     if hh_ok:
         text = "<b>HH Account</b>\n\nStatus: Linked"
     else:
@@ -252,7 +255,8 @@ async def toggle_monitoring_message(message: Message) -> None:
     from ..keyboards import settings_reply_keyboard
     gemini_model = await get_setting("gemini_model", "gemini-2.0-flash")
     tz_offset = int(await get_setting("monitoring_timezone_offset", "3"))
-    hh_ok = hh_auth.session_exists()
+    from ...services.hh_api_client import hh_api
+    hh_ok = hh_api.is_authenticated
     hh_status = "Linked" if hh_ok else "Not linked"
     
     text = (
@@ -316,7 +320,8 @@ async def set_timezone_callback(callback: CallbackQuery) -> None:
     
     # Reload settings view
     gemini_model = await get_setting("gemini_model", "gemini-2.0-flash")
-    hh_ok = hh_auth.session_exists()
+    from ...services.hh_api_client import hh_api
+    hh_ok = hh_api.is_authenticated
     from ..keyboards import settings_keyboard
     
     await callback.message.edit_text(

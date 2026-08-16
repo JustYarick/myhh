@@ -73,4 +73,35 @@ class HHResumeService:
             logger.error(f"Failed to raise resume {resume_id}: {e}")
             return False, f"Ошибка API: {msg}"
 
+    async def get_resumes(self) -> list:
+        """
+        Fetch the user's resumes using the mobile API.
+        Returns a list of dataclass-like objects or dicts (since we need .id, .title, .status).
+        """
+        try:
+            from .hh_api_client import hh_api
+            from dataclasses import dataclass
+            
+            @dataclass
+            class ResumeInfo:
+                id: str
+                title: str
+                status: str
+                
+            data = await hh_api.request("GET", "resumes/mine")
+            if not data or "items" not in data:
+                return []
+                
+            return [
+                ResumeInfo(
+                    id=item.get("id", ""),
+                    title=item.get("title", "Без названия"),
+                    status=item.get("status", {}).get("id", "unknown")
+                )
+                for item in data["items"]
+            ]
+        except Exception as e:
+            logger.error(f"Failed to fetch resumes: {e}")
+            return []
+
 resume_service = HHResumeService()

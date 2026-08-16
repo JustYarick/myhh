@@ -447,15 +447,16 @@ async def global_status_info_message(message: Message) -> None:
     if not await _check_access(message.from_user.id):
         return
     
-    from ...services.hh_auth import hh_auth
+    from ...services.hh_api_client import hh_api
     from ...scheduler import manual_scheduler, monitoring_scheduler, RunState
     from ...services.flow_entity import get_active_flow
     
     # Global settings
     gemini_model = await db.get_setting("gemini_model", "gemini-2.0-flash")
     tz_offset = int(await db.get_setting("monitoring_timezone_offset", "3"))
-    hh_ok = hh_auth.session_exists()
-    hh_status = "🟢 Подключен" if hh_ok else "🔴 Не подключен"
+    await hh_api.load_token()
+    hh_ok = hh_api.is_authenticated
+    hh_status = "🟢 Активен" if hh_ok else "🔴 Не настроен"
     
     # Local time calculation
     from datetime import datetime, timedelta, timezone
