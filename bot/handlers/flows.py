@@ -149,8 +149,18 @@ async def flow_test_message_handler(message: Message, state: FSMContext) -> None
     try:
         from ...services.hh_search import HHSearchService
         from ...services.anti_fraud import AntiFraud
+        from ...services.hh_resume import resume_service
         search_service = HHSearchService()
         af = AntiFraud(flow.config)
+
+        resume_text = flow.config.resume_text
+        if not resume_text and flow.config.resume_id:
+            await message.answer("⏳ <i>Получаю текст резюме с HH.ru...</i>", parse_mode="HTML")
+            resume_text = await resume_service.fetch_resume_text(flow.config.resume_id)
+            if resume_text:
+                flow.config.resume_text = resume_text
+                await flow_db.update_flow(flow_id, config=flow.config)
+
         _, cards, _ = await search_service.search_cards(af, 0, flow.config.search_url)
         if not cards:
             await message.answer("❌ Вакансии на первой странице не найдены.")
