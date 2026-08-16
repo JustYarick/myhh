@@ -161,6 +161,9 @@ def flow_edit_keyboard(flow_id: int, config) -> InlineKeyboardMarkup:
         InlineKeyboardButton(text="📝 Промпт анализа", callback_data=f"fe_{flow_id}_analysis_prompt"),
     ])
     rows.append([
+        InlineKeyboardButton(text="📝 Доп. правила", callback_data=f"fe_{flow_id}_custom_rules"),
+    ])
+    rows.append([
         InlineKeyboardButton(text="🚫 Черный список", callback_data=f"fe_{flow_id}_exclude_employers"),
         InlineKeyboardButton(text="🧪 Test run", callback_data=f"fe_{flow_id}_test"),
     ])

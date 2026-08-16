@@ -48,6 +48,7 @@ async def _start_field_edit(message: Message, flow_id: int, field: str, state: F
         "delay_max": "Max delay (seconds)",
         "cover_letter_prompt": "Cover letter prompt",
         "analysis_prompt": "Analysis prompt",
+        "custom_rules": "Дополнительные пользовательские правила",
         "exclude_employers": "Черный список компаний (через запятую)",
     }
     label = field_labels.get(field, field)
@@ -55,8 +56,8 @@ async def _start_field_edit(message: Message, flow_id: int, field: str, state: F
     hint = ""
     if field == "search_url":
         hint = "\n\n<i>Paste a full HH.ru search URL with all filters.</i>\n<code>https://hh.ru/search/vacancy?text=DevOps&experience=between1And3&work_format=REMOTE</code>\nOr enter 'clear' to disable."
-    elif field in ("cover_letter_prompt", "analysis_prompt"):
-        hint = "\n\n<i>Available placeholders:</i>\n<code>{title}</code> <code>{employer}</code> <code>{description}</code> <code>{resume}</code>"
+    elif field in ("cover_letter_prompt", "analysis_prompt", "custom_rules"):
+        hint = "\n\n<i>Available placeholders:</i>\n<code>{title}</code> <code>{employer}</code> <code>{description}</code> <code>{resume}</code>\n<i>Оставьте пустым или напишите 'clear' для очистки.</i>"
     elif field == "exclude_employers":
         hint = "\n\n<i>Введите названия компаний через запятую (например: Сбер, Яндекс, МТС). Бот будет автоматически пропускать отклики в эти компании. Введите 'clear' для очистки списка.</i>"
 
@@ -460,6 +461,7 @@ async def flow_test_callback(callback: CallbackQuery) -> None:
                             v.model_dump(),
                             prompt_template=flow.config.analysis_prompt,
                             resume_text=resume_text,
+                            custom_rules=flow.config.custom_rules,
                         )
                     color = relevance_color(analysis.relevance)
                     vacancy_parts.append(f"🤖 {bold('AI Analysis')}: {color} {bold(f'{analysis.relevance}/10')} {relevance_bar(analysis.relevance)}")
@@ -476,6 +478,7 @@ async def flow_test_callback(callback: CallbackQuery) -> None:
                         v.model_dump(),
                         prompt_template=flow.config.cover_letter_prompt,
                         resume_text=resume_text,
+                        custom_rules=flow.config.custom_rules,
                     )
                     if cover:
                         vacancy_parts.append(f"\n📝 {bold('Cover Letter')}:")
@@ -805,14 +808,15 @@ async def flow_field_edit_callback(callback: CallbackQuery, state: FSMContext) -
         "schedule": "Schedule (START_HOUR STOP_HOUR or 'off')",
         "cover_letter_prompt": "Cover letter prompt",
         "analysis_prompt": "Analysis prompt",
+        "custom_rules": "Дополнительные пользовательские правила",
     }
     label = field_labels.get(field, field)
 
     hint = ""
     if field == "search_url":
         hint = "\n\n<i>Paste a full HH.ru search URL with all filters.</i>\n<code>https://hh.ru/search/vacancy?text=DevOps&experience=between1And3&work_format=REMOTE</code>\nOr enter 'clear' to disable."
-    elif field in ("cover_letter_prompt", "analysis_prompt"):
-        hint = "\n\n<i>Available placeholders:</i>\n<code>{title}</code> <code>{employer}</code> <code>{description}</code> <code>{resume}</code>"
+    elif field in ("cover_letter_prompt", "analysis_prompt", "custom_rules"):
+        hint = "\n\n<i>Available placeholders:</i>\n<code>{title}</code> <code>{employer}</code> <code>{description}</code> <code>{resume}</code>\n<i>Оставьте пустым или напишите 'clear' для очистки.</i>"
 
     await callback.message.edit_text(
         f"<b>Flow: {flow.name}</b>\n\nEdit: <b>{label}</b>\nCurrent: <code>{current}</code>{hint}",

@@ -334,6 +334,7 @@ class Scheduler:
                         vacancy.model_dump(),
                         prompt_template=config.analysis_prompt,
                         resume_text=resume_text,
+                        custom_rules=config.custom_rules,
                     )
                 )
             except Exception as e:
@@ -373,6 +374,7 @@ class Scheduler:
                     vacancy.model_dump(),
                     prompt_template=config.cover_letter_prompt,
                     resume_text=resume_text,
+                    custom_rules=config.custom_rules,
                 )
             )
         except Exception as e:

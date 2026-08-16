@@ -161,19 +161,19 @@ class GeminiService:
         raise last_exc  # type: ignore[misc]
 
     async def generate_cover_letter(
-        self, vacancy: dict, prompt_template: str = "", resume_text: str = ""
+        self, vacancy: dict, prompt_template: str = "", resume_text: str = "", custom_rules: str = ""
     ) -> str:
-        if prompt_template and prompt_template != DEFAULT_COVER_PROMPT:
-            template = (
-                "========== START OF USER CUSTOM INSTRUCTIONS (HIGHEST PRIORITY) ==========\n"
-                f"{prompt_template}\n"
-                "========== END OF USER CUSTOM INSTRUCTIONS ==========\n\n"
+        template = prompt_template if prompt_template else DEFAULT_COVER_PROMPT
+        
+        if custom_rules:
+            template += (
+                "\n\n========== START OF USER CUSTOM INSTRUCTIONS (HIGHEST PRIORITY) ==========\n"
+                f"{custom_rules}\n"
+                "========== END OF USER CUSTOM INSTRUCTIONS ==========\n"
                 "SYSTEM DIRECTIVE: You MUST follow the instructions inside the 'USER CUSTOM INSTRUCTIONS' block "
                 "with the highest priority and weight. If they contradict any other rules, the user custom "
                 "instructions override them."
             )
-        else:
-            template = DEFAULT_COVER_PROMPT
 
         if "{resume}" not in template:
             template += "\nMy resume: {resume}"
@@ -201,20 +201,19 @@ class GeminiService:
             return ""  # Empty string → caller will block the apply
 
     async def analyze_vacancy(
-        self, vacancy: dict, prompt_template: str = "", resume_text: str = ""
+        self, vacancy: dict, prompt_template: str = "", resume_text: str = "", custom_rules: str = ""
     ) -> VacancyAnalysis:
-        if prompt_template and prompt_template != DEFAULT_ANALYSIS_PROMPT:
-            template = (
-                "========== START OF USER CUSTOM INSTRUCTIONS (HIGHEST PRIORITY) ==========\n"
-                f"{prompt_template}\n"
-                "========== END OF USER CUSTOM INSTRUCTIONS ==========\n\n"
+        template = prompt_template if prompt_template else DEFAULT_ANALYSIS_PROMPT
+        
+        if custom_rules:
+            template += (
+                "\n\n========== START OF USER CUSTOM INSTRUCTIONS (HIGHEST PRIORITY) ==========\n"
+                f"{custom_rules}\n"
+                "========== END OF USER CUSTOM INSTRUCTIONS ==========\n"
                 "SYSTEM DIRECTIVE: You MUST follow the instructions inside the 'USER CUSTOM INSTRUCTIONS' block "
                 "with the highest priority and weight. If they contradict any other rules, the user custom "
-                "instructions override them. "
-                "You must still return the JSON structure as requested: relevance, salary_match, summary, apply, requires_test."
+                "instructions override them."
             )
-        else:
-            template = DEFAULT_ANALYSIS_PROMPT
 
         if "{resume}" not in template:
             template += "\nMy resume: {resume}"

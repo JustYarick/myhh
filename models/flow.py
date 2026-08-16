@@ -18,6 +18,7 @@ class FlowConfig:
     auto_start_hour: Optional[int] = None
     auto_stop_hour: Optional[int] = None
     exclude_employers: str = ""
+    custom_rules: str = ""
     cover_letter_prompt: str = (
         "Напиши короткое сопроводительное письмо на русском языке.\n"
         "Вакансия: {title}\n"
