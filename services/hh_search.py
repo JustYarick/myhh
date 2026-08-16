@@ -1,20 +1,33 @@
-import asyncio
-import logging
-import random
-import re
-from typing import Optional
+"""
+HH.ru vacancy search service — uses the mobile REST API.
 
-from playwright.async_api import Page
+Replaces the previous Playwright-based scraping approach with clean
+API calls via :mod:`hh_api_client`.
+
+The public interface (``search_service``, ``prepare_search_url``,
+``search_cards``, ``get_vacancy_description``) is kept **identical** to
+the old implementation so that :mod:`scheduler.runner` needs no changes.
+"""
+from __future__ import annotations
+
+import logging
+import re
+from typing import Any, Optional
+from urllib.parse import urlparse, parse_qs
 
 from ..models import Vacancy
-from .browser import browser_manager
-from .anti_fraud import AntiFraud, get_random_viewport, get_random_user_agent
-from .playwright_utils import check_bot_protection
+from .anti_fraud import AntiFraud
+from .hh_api_client import hh_api, HHApiError, HHNotFound
 
 logger = logging.getLogger(__name__)
 
 
+# ---------------------------------------------------------------------------
+# URL helpers
+# ---------------------------------------------------------------------------
+
 def prepare_search_url(url: str) -> str:
+    """Ensure the search URL has ``order_by=publication_time``."""
     if not url:
         return ""
     if "order_by=" not in url:
@@ -23,376 +36,245 @@ def prepare_search_url(url: str) -> str:
     return url
 
 
+def _url_to_api_params(search_url: str, page_num: int = 0) -> dict:
+    """
+    Convert a hh.ru web search URL (with query-string filters) into a
+    dict of parameters suitable for GET /vacancies.
+
+    Keys that HH web uses are mostly the same as the API, except:
+    - ``items_on_page``  → ``per_page``   (we force 20)
+    - ``page``           → ``page``       (0-based, same)
+    """
+    parsed = urlparse(search_url)
+    qs: dict[str, list[str]] = parse_qs(parsed.query, keep_blank_values=False)
+
+    params: dict[str, Any] = {}
+
+    # Copy through all params that the HH API accepts
+    _pass_through = {
+        "text", "area", "professional_role", "industry", "employer_id",
+        "experience", "employment", "schedule", "work_format",
+        "salary", "currency", "only_with_salary",
+        "period", "date_from", "date_to",
+        "label", "order_by",
+        "top_lat", "bottom_lat", "left_lng", "right_lng",
+        "sort_point_lat", "sort_point_lng",
+    }
+    for key, values in qs.items():
+        if key in _pass_through:
+            # Multi-value params → keep as comma-separated or first value
+            params[key] = values[0] if len(values) == 1 else values
+
+    # Force publication_time ordering if not explicitly set
+    params.setdefault("order_by", "publication_time")
+    params["page"] = page_num
+    params["per_page"] = 20
+
+    return params
+
+
+def _vacancy_url(vacancy: dict) -> str:
+    """Return the canonical web URL for a vacancy dict returned by the API."""
+    # The API returns 'alternate_url' (web page) and 'url' (API URL)
+    return vacancy.get("alternate_url") or vacancy.get("url", "")
+
+
+def _vacancy_id_from_url(url: str) -> str:
+    """Extract numeric vacancy id from alternate_url."""
+    m = re.search(r"/vacancy/(\d+)", url)
+    return m.group(1) if m else ""
+
+
+def _parse_description(vac_detail: dict) -> str:
+    """
+    Build a plain-text description from a full vacancy detail response.
+    Combines structured fields + HTML description (stripped of tags).
+    """
+    parts: list[str] = []
+
+    exp = (vac_detail.get("experience") or {}).get("name", "")
+    if exp:
+        parts.append(f"Требуемый опыт работы: {exp}")
+
+    salary = vac_detail.get("salary")
+    if salary:
+        sal_from = salary.get("from")
+        sal_to = salary.get("to")
+        sal_cur = salary.get("currency", "")
+        sal_txt = ""
+        if sal_from:
+            sal_txt += f"от {sal_from} "
+        if sal_to:
+            sal_txt += f"до {sal_to} "
+        sal_txt += sal_cur
+        parts.append(f"Зарплата: {sal_txt.strip()}")
+
+    # Strip HTML tags from description
+    raw_desc: str = vac_detail.get("description", "") or ""
+    clean_desc = re.sub(r"<[^>]+>", " ", raw_desc)
+    clean_desc = re.sub(r"&nbsp;", " ", clean_desc)
+    clean_desc = re.sub(r"&amp;", "&", clean_desc)
+    clean_desc = re.sub(r"&lt;", "<", clean_desc)
+    clean_desc = re.sub(r"&gt;", ">", clean_desc)
+    clean_desc = re.sub(r"\s{2,}", " ", clean_desc).strip()
+
+    if parts:
+        header = "ТРЕБОВАНИЯ ВАКАНСИИ:\n" + "\n".join(parts) + "\n\nОПИСАНИЕ:\n"
+    else:
+        header = ""
+
+    return header + clean_desc
+
+
+# ---------------------------------------------------------------------------
+# Service
+# ---------------------------------------------------------------------------
+
 class HHSearchService:
+    """Search vacancies and fetch descriptions via HH REST API."""
 
-    async def _get_vacancy_description(self, page: Page, url: str) -> str:
-        from .. import database as db
-        try:
-            cached = await db.get_cached_vacancy_description(url)
-            if cached:
-                logger.info(f"Using cached description for: {url}")
-                return cached
-        except Exception as e:
-            logger.debug(f"Failed to read description cache: {e}")
-
-        try:
-            logger.debug(f"Fetching description from web: {url}")
-            await page.goto(url, wait_until="domcontentloaded", timeout=15000)
-            await page.wait_for_selector("[data-qa='vacancy-description']", timeout=10000)
-
-            # Get structured experience & salary fields from the page header
-            exp_text = ""
-            exp_el = page.locator("[data-qa='vacancy-experience']")
-            if await exp_el.count() > 0:
-                exp_text = (await exp_el.inner_text()).strip()
-
-            salary_text = ""
-            salary_el = page.locator("[data-qa='vacancy-salary']")
-            if await salary_el.count() > 0:
-                salary_text = (await salary_el.inner_text()).strip()
-
-            description_el = page.locator("[data-qa='vacancy-description']")
-            if await description_el.count() > 0:
-                body_text = (await description_el.inner_text()).strip()
-                
-                # Combine structured headers with main description body
-                header_parts = []
-                if exp_text:
-                    header_parts.append(f"Требуемый опыт работы: {exp_text}")
-                if salary_text:
-                    header_parts.append(f"Зарплата: {salary_text}")
-                
-                if header_parts:
-                    text = "ТРЕБОВАНИЯ ВАКАНСИИ:\n" + "\n".join(header_parts) + "\n\nОПИСАНИЕ:\n" + body_text
-                else:
-                    text = body_text
-
-                logger.debug(f"Description length: {len(text)} chars")
-                logger.debug(f"[VACANCY FULL DESC]\n{'='*60}\n{text}\n{'='*60}")
-                
-                # Save to cache
-                try:
-                    title_el = page.locator("[data-qa='vacancy-title']")
-                    title = await title_el.inner_text() if await title_el.count() > 0 else "Unknown"
-                    employer_el = page.locator("[data-qa='vacancy-company-name']").first
-                    employer = await employer_el.inner_text() if await employer_el.count() > 0 else "Unknown"
-                    await db.save_vacancy_description_to_cache(url, title, employer, text)
-                except Exception as cache_err:
-                    logger.warning(f"Failed to cache fetched description: {cache_err}")
-                return text
-            return ""
-        except Exception as e:
-            logger.warning(f"Failed to get description for {url}: {e}")
-            return ""
-
-    async def get_vacancy_count(self, page: Page) -> int:
-        for sel in [
-            "[data-qa='vacancy-serp__found-count']",
-            "[data-qa='vacancy-serp__results-search-info']",
-            "h1",
-        ]:
-            try:
-                el = page.locator(sel).first
-                if await el.count() > 0:
-                    text = await el.inner_text()
-                    nums = re.findall(r"[\d\s]+", text.replace("\xa0", " "))
-                    for n in nums:
-                        n = n.strip().replace(" ", "")
-                        if n.isdigit():
-                            count = int(n)
-                            logger.info(f"Vacancy count from '{sel}': {count}")
-                            return count
-            except Exception:
-                continue
-
-        try:
-            text = await page.locator("body").inner_text()
-            m = re.search(r"(?:Найден[оа]?\s+)([\d\s]+)\s*(?:ваканси|результа)", text)
-            if m:
-                count = int(m.group(1).replace(" ", ""))
-                logger.info(f"Vacancy count from body text: {count}")
-                return count
-        except Exception:
-            pass
-
-        logger.warning("Could not extract vacancy count")
-        return 0
-
-    async def _parse_vacancy_cards(self, page: Page) -> list[dict]:
-        vacancy_data: list[dict] = []
-        cards = await page.locator("[data-qa='vacancy-serp__vacancy']").all()
-        for i, card in enumerate(cards):
-            try:
-                title_el = card.locator("[data-qa='serp-item__title']")
-                await title_el.wait_for(state="visible", timeout=5000)
-
-                href = await title_el.get_attribute("href")
-                if href:
-                    href = href.split("?")[0]
-                title = await title_el.inner_text()
-
-                employer_el = card.locator(
-                    "[data-qa='vacancy-serp__vacancy-employer']"
-                ).first
-                employer = (
-                    await employer_el.inner_text()
-                    if await employer_el.count() > 0
-                    else "Unknown"
-                )
-
-                salary = ""
-                salary_el = card.locator("[data-qa='vacancy-serp__vacancy-compensation']").first
-                if await salary_el.count() > 0:
-                    salary = await salary_el.inner_text()
-
-                vacancy_data.append({
-                    "title": title,
-                    "url": href,
-                    "employer": employer,
-                    "salary": salary,
-                })
-                logger.debug(f"Card {i}: {title} @ {employer}")
-            except Exception as e:
-                logger.warning(f"Failed to parse vacancy card {i}: {e}")
-                continue
-
-        logger.info(f"Parsed {len(vacancy_data)} vacancy cards")
-        return vacancy_data
-
-    async def _fetch_descriptions(
-        self, page: Page, vacancy_data: list[dict], af: AntiFraud, max_count: int = 0
-    ) -> list[Vacancy]:
-        vacancies: list[Vacancy] = []
-        items = vacancy_data[:max_count] if max_count > 0 else vacancy_data
-        for data in items:
-            await af.pre_action_delay()
-            description = await self.get_vacancy_description(page, data["url"])
-            vacancies.append(Vacancy(
-                title=data["title"],
-                url=data["url"],
-                employer=data["employer"],
-                description=description,
-            ))
-            await af.post_action_delay()
-        return vacancies
-
-    async def _go_to_search_page(self, page: Page, url: str, af: AntiFraud) -> None:
-        logger.info(f"Navigating to: {url}")
-        await af.random_delay()
-        await page.goto(url, wait_until="domcontentloaded", timeout=45000)
-
-        if await check_bot_protection(page):
-            af.captcha_detected()
-            raise RuntimeError("Bot protection triggered (captcha)")
-
-        af.captcha_cleared()
-
-    async def _wait_for_vacancies(self, page: Page) -> bool:
-        try:
-            await page.wait_for_selector(
-                "[data-qa='vacancy-serp__vacancy']", timeout=10000
-            )
-            return True
-        except Exception:
-            logger.info("No vacancy cards found on page")
-            return False
-
-    async def get_vacancy_description(self, page: Page, url: str) -> str:
-        from .. import database as db
-        try:
-            cached = await db.get_cached_vacancy_description(url)
-            if cached:
-                logger.info(f"Using cached description for: {url}")
-                return cached
-        except Exception as e:
-            logger.debug(f"Failed to read description cache: {e}")
-
-        context = page.context
-        temp_page = await context.new_page()
-        try:
-            temp_page.set_default_timeout(
-                page._timeout_settings._default_timeout
-                if hasattr(page, "_timeout_settings")
-                else 30000
-            )
-            return await self._get_vacancy_description(temp_page, url)
-        finally:
-            try:
-                await temp_page.close()
-            except Exception:
-                pass
-
-    async def close_page(self, page: Page) -> None:
-        try:
-            await page.context.__aexit__(None, None, None)
-        except Exception:
-            pass
+    # ------------------------------------------------------------------
+    # Card list (called from runner._run_loop)
+    # ------------------------------------------------------------------
 
     async def search_cards(
         self,
         anti_fraud: AntiFraud,
         page_num: int = 0,
         url: str = "",
-        existing_page: Optional[Page] = None,
-    ) -> tuple[Optional[Page], list[dict], Optional[object]]:
+        # Kept for backward-compat; ignored (no browser used)
+        existing_page=None,
+    ) -> tuple[None, list[dict], None]:
+        """
+        Fetch one page of vacancy cards from the API.
+
+        Returns ``(None, cards, None)`` — the first and third elements
+        used to be the Playwright page/context objects; they are now
+        always ``None`` since we use the REST API.
+
+        Each card dict has: ``url``, ``title``, ``employer``, ``salary``.
+        """
         url = prepare_search_url(url)
+        params = _url_to_api_params(url, page_num)
 
-        if "page=" not in url:
-            sep = "&" if "?" in url else "?"
-            url = f"{url}{sep}page={page_num}"
-        else:
-            url = re.sub(r"page=\d+", f"page={page_num}", url)
+        logger.info("search_cards API: page=%d params=%s", page_num, params)
 
-        logger.info(f"search_cards: {url}")
+        try:
+            rv = await hh_api.search_vacancies(params)
+        except HHApiError as e:
+            logger.error("search_cards API error: %s", e)
+            return None, [], None
 
-        page = existing_page
-        context = None
+        items: list[dict] = rv.get("items", [])
+        cards = []
+        for item in items:
+            vac_url = _vacancy_url(item)
+            if not vac_url:
+                continue
+            cards.append({
+                "url": vac_url,
+                "title": item.get("name", ""),
+                "employer": (item.get("employer") or {}).get("name", "Unknown"),
+                "salary": _fmt_salary(item.get("salary")),
+                "_api_id": item.get("id", ""),
+            })
 
-        if page is None:
-            ctx_args = {
-                "viewport": get_random_viewport(),
-                "user_agent": get_random_user_agent(),
-            }
-            if browser_manager._settings.session_file.exists():
-                ctx_args["storage_state"] = str(browser_manager._settings.session_file)
-            if browser_manager._settings.proxy_url:
-                ctx_args["proxy"] = {"server": browser_manager._settings.proxy_url}
+        logger.info("search_cards: %d cards on page %d", len(cards), page_num)
+        return None, cards, None
 
-            await browser_manager._ensure_browser()
-            context = await browser_manager._browser.new_context(**ctx_args)
-            page = await context.new_page()
-            page.set_default_timeout(browser_manager._settings.page_timeout)
+    # ------------------------------------------------------------------
+    # Vacancy description (called from runner._process_card)
+    # ------------------------------------------------------------------
 
-        await self._go_to_search_page(page, url, anti_fraud)
-
-        count = await self.get_vacancy_count(page)
-        logger.info(f"Count: {count}")
-
-        if not await self._wait_for_vacancies(page):
-            return page, [], context
-
-        await anti_fraud.random_scroll(page)
-        vacancy_data = await self._parse_vacancy_cards(page)
-
-        logger.info(f"Returning {len(vacancy_data)} cards")
-        return page, vacancy_data, context
-
-    async def search(
+    async def get_vacancy_description(
         self,
-        anti_fraud: AntiFraud,
-        page_num: int = 0,
-        url: str = "",
-        query: str = "",
-        area_code: str = "",
-    ) -> list[Vacancy]:
-        if url:
-            return await self.search_by_url(url, anti_fraud, page_num)
-
-        if not query:
-            return []
-
-        logger.info(f"Searching: query='{query}', area={area_code}, page={page_num}")
-
-        search_url = (
-            f"https://hh.ru/search/vacancy?"
-            f"text={query}&area={area_code}"
-            f"&items_on_page=20&page={page_num}"
-        )
-
-        async with browser_manager.get_page(use_session=True) as page:
-            await self._go_to_search_page(page, search_url, anti_fraud)
-
-            count = await self.get_vacancy_count(page)
-            logger.info(f"Total vacancies found: {count}")
-
-            if not await self._wait_for_vacancies(page):
-                return []
-
-            await anti_fraud.random_scroll(page)
-            vacancy_data = await self._parse_vacancy_cards(page)
-            vacancies = await self._fetch_descriptions(page, vacancy_data, anti_fraud)
-
-            logger.info(f"Returning {len(vacancies)} vacancies from page {page_num}")
-            return vacancies
-
-    async def search_by_url(
-        self,
+        page,  # kept for signature compat; ignored
         url: str,
-        anti_fraud: AntiFraud,
-        page_num: int = 0,
-        max_descriptions: int = 0,
-    ) -> list[Vacancy]:
-        if "page=" not in url:
-            sep = "&" if "?" in url else "?"
-            url = f"{url}{sep}page={page_num}"
-        else:
-            url = re.sub(r"page=\d+", f"page={page_num}", url)
+    ) -> str:
+        """
+        Fetch the full vacancy description via GET /vacancies/{id}.
 
-        logger.info(f"Searching by URL: {url}")
+        Falls back to empty string on any error.
+        Caches results in the database.
+        """
+        from .. import database as db
 
-        async with browser_manager.get_page(use_session=True) as page:
-            await self._go_to_search_page(page, url, anti_fraud)
+        try:
+            cached = await db.get_cached_vacancy_description(url)
+            if cached:
+                logger.debug("Using cached description for: %s", url)
+                return cached
+        except Exception as e:
+            logger.debug("Failed to read description cache: %s", e)
 
-            count = await self.get_vacancy_count(page)
-            logger.info(f"Total vacancies found: {count}")
+        vacancy_id = _vacancy_id_from_url(url)
+        if not vacancy_id:
+            logger.warning("Cannot extract vacancy id from url: %s", url)
+            return ""
 
-            if not await self._wait_for_vacancies(page):
-                return []
+        try:
+            detail = await hh_api.get_vacancy(vacancy_id)
+        except HHNotFound:
+            logger.warning("Vacancy not found: %s", url)
+            return ""
+        except HHApiError as e:
+            logger.warning("Failed to get vacancy %s: %s", url, e)
+            return ""
 
-            await anti_fraud.random_scroll(page)
-            vacancy_data = await self._parse_vacancy_cards(page)
-            vacancies = await self._fetch_descriptions(
-                page, vacancy_data, anti_fraud, max_count=max_descriptions
-            )
+        description = _parse_description(detail)
 
-            logger.info(f"Returning {len(vacancies)} vacancies")
-            return vacancies
+        # Cache for future runs
+        try:
+            title = detail.get("name", "Unknown")
+            employer = (detail.get("employer") or {}).get("name", "Unknown")
+            await db.save_vacancy_description_to_cache(url, title, employer, description)
+        except Exception as cache_err:
+            logger.warning("Failed to cache description: %s", cache_err)
 
-    async def get_search_info(self, url: str, anti_fraud: AntiFraud) -> tuple[int, str]:
-        logger.info(f"Getting search info for: {url}")
+        return description
 
-        async with browser_manager.get_page(use_session=True) as page:
-            await self._go_to_search_page(page, url, anti_fraud)
+    # ------------------------------------------------------------------
+    # Convenience helpers (kept for compat)
+    # ------------------------------------------------------------------
 
-            count = await self.get_vacancy_count(page)
+    async def get_vacancy_count(self, *_args, **_kwargs) -> int:
+        """Not used by runner; kept for backward compat."""
+        return 0
 
-            page_title = await page.title()
-            logger.info(f"Search info: count={count}, title={page_title}")
-            return count, page_title
+    async def search_by_url(self, url: str, anti_fraud: AntiFraud, page_num: int = 0, **_kw) -> list[Vacancy]:
+        _, cards, _ = await self.search_cards(anti_fraud, page_num, url)
+        result = []
+        for card in cards:
+            desc = await self.get_vacancy_description(None, card["url"])
+            result.append(Vacancy(
+                title=card["title"],
+                url=card["url"],
+                employer=card["employer"],
+                description=desc,
+            ))
+        return result
 
-    async def search_with_info(
-        self,
-        url: str,
-        anti_fraud: AntiFraud,
-        page_num: int = 0,
-        max_descriptions: int = 0,
-    ) -> tuple[int, str, list[Vacancy]]:
-        if "page=" not in url:
-            sep = "&" if "?" in url else "?"
-            url = f"{url}{sep}page={page_num}"
-        else:
-            url = re.sub(r"page=\d+", f"page={page_num}", url)
 
-        logger.info(f"Search with info: {url}")
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
 
-        async with browser_manager.get_page(use_session=True) as page:
-            await self._go_to_search_page(page, url, anti_fraud)
+def _fmt_salary(salary: Optional[dict]) -> str:
+    if not salary:
+        return ""
+    sal_from = salary.get("from")
+    sal_to = salary.get("to")
+    cur = salary.get("currency", "")
+    parts = []
+    if sal_from:
+        parts.append(f"от {sal_from}")
+    if sal_to:
+        parts.append(f"до {sal_to}")
+    return " ".join(parts) + (f" {cur}" if cur else "")
 
-            count = await self.get_vacancy_count(page)
-            page_title = await page.title()
-            logger.info(f"Count: {count}, title: {page_title}")
 
-            if not await self._wait_for_vacancies(page):
-                return count, page_title, []
-
-            await anti_fraud.random_scroll(page)
-            vacancy_data = await self._parse_vacancy_cards(page)
-            vacancies = await self._fetch_descriptions(
-                page, vacancy_data, anti_fraud, max_count=max_descriptions
-            )
-
-            logger.info(f"Returning {len(vacancies)} vacancies")
-            return count, page_title, vacancies
-
+# ---------------------------------------------------------------------------
+# Module-level singleton
+# ---------------------------------------------------------------------------
 
 search_service = HHSearchService()

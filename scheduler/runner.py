@@ -12,8 +12,7 @@ from ..services.hh_search import search_service, prepare_search_url
 from ..services.hh_apply import apply_service
 from ..services.gemini import gemini_service
 from ..services.flow_entity import FlowConfig, get_active_flow, update_flow, get_active_flow_id
-from ..services.browser import browser_manager
-from ..services.hh_auth import hh_auth
+from ..services.hh_api_client import hh_api
 from ..bot.formatting import format_apply_success, format_session_finished, format_scheduler_status, format_monitoring_finished
 
 logger = logging.getLogger(__name__)
@@ -140,9 +139,13 @@ class Scheduler:
             await self._notify("⚠️ Already running!")
             return
 
-        settings = get_settings()
-        if not settings.session_file.exists():
-            await self._notify("❌ HH.ru session not found. Login first.")
+        # Check that HH API token is available
+        await hh_api.load_token()
+        if not hh_api.is_authenticated:
+            await self._notify(
+                "❌ HH API токен не найден.\n"
+                "Перейдите в <b>Настройки → 📱 Авторизация HH (API)</b> и пройдите авторизацию.",
+            )
             return
 
         flow = await get_active_flow()
@@ -554,7 +557,12 @@ class Scheduler:
 
         if not resume_text and config.resume_id:
             logger.info(f"Resume text not cached, fetching for resume_id={config.resume_id}")
-            resume_text = await self._run_interruptible(hh_auth.get_resume_text(config.resume_id))
+            try:
+                from ..services.hh_resume import resume_service
+                resume_text = await self._run_interruptible(resume_service.fetch_resume_text(config.resume_id))
+            except Exception as e:
+                logger.warning(f"Failed to fetch resume text via browser: {e}")
+                resume_text = ""
             if resume_text:
                 config.resume_text = resume_text
                 if flow_id:
@@ -567,11 +575,7 @@ class Scheduler:
                      f"search_url={config.search_url[:60] if config.search_url else ''}, "
                      f"resume={'loaded' if resume_text else 'none'}")
 
-        context = None
-        page = None
         try:
-            context, page = await browser_manager.create_run_context()
-            logger.info("Created shared browser context for run")
             session_success_count = 0
             session_skipped_count = 0
             session_error_count = 0
@@ -598,36 +602,19 @@ class Scheduler:
                     await self._notify(f"🔍 Searching page <b>{page_num + 1}/{max_search_pages}</b>...")
                 self.state.current_page = page_num + 1
 
-                # A search failure (timeout, layout change, network blip)
+                # A search failure (network blip, API error)
                 # must skip this page, not kill the whole run.
                 try:
-                    page, cards, new_ctx = await self._run_interruptible(
+                    _, cards, _ = await self._run_interruptible(
                         search_service.search_cards(
                             anti_fraud=anti_fraud,
                             page_num=page_num,
                             url=config.search_url,
-                            existing_page=page,
                         )
                     )
-                    if new_ctx and not context:
-                        context = new_ctx
-                except RuntimeError as e:
-                    if "captcha" in str(e).lower():
-                        anti_fraud.captcha_detected()
-                        self._run_state = RunState.PAUSED
-                        self._resume_event.clear()
-                        self.state.paused = True
-                        await self._notify(
-                            "🔒 <b>Captcha detected!</b> Pausing. Wait and resume.",
-                            notify_type="error"
-                        )
-                        continue
+                except Exception as e:
                     logger.error(f"Search failed on page {page_num + 1}: {e}", exc_info=True)
                     await self._notify(f"⚠️ Search error on page {page_num + 1}, skipping: {e}", notify_type="error")
-                    continue
-                except Exception as e:
-                    logger.error(f"Unexpected search error on page {page_num + 1}: {e}", exc_info=True)
-                    await self._notify(f"⚠️ Unexpected search error on page {page_num + 1}, skipping: {e}", notify_type="error")
                     continue
 
                 if not cards:
@@ -640,7 +627,7 @@ class Scheduler:
                     new_boundary_url = first_id
 
                     # If there's no baseline set, establish it now and stop
-                    if not last_newest_url:
+                    if not last_newest_url and self.name == "Monitoring":
                         await self._notify(
                             f"🏁 <b>Базовая точка мониторинга установлена</b>:\n"
                             f"Вакансия ID: <code>{first_id}</code>\n"
@@ -700,7 +687,7 @@ class Scheduler:
                         # Wrap vacancy processing with a hard timeout of 3 minutes (180s)
                         applied = await asyncio.wait_for(
                             self._process_card(
-                                card, page, anti_fraud, resume_text, config, i, len(cards)
+                                card, None, anti_fraud, resume_text, config, i, len(cards)
                             ),
                             timeout=180.0
                         )
@@ -792,18 +779,6 @@ class Scheduler:
             if flow_id and new_boundary_url:
                 await db.set_setting(f"last_newest_vacancy_{flow_id}", new_boundary_url)
                 logger.info(f"Saved new newest vacancy url boundary for flow {flow_id}: {new_boundary_url}")
-
-            if context:
-                try:
-                    await context.close()
-                except Exception:
-                    pass
-            # Stop the browser to free memory and prevent leaks
-            try:
-                await browser_manager.stop()
-                logger.info("Browser stopped at the end of scheduler run to free memory")
-            except Exception as e:
-                logger.error(f"Failed to stop browser: {e}")
 
             self._run_state = RunState.IDLE
             self.state = BotState()

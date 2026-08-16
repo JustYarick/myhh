@@ -1,199 +1,177 @@
-import asyncio
+"""
+HH.ru vacancy apply service — uses the mobile REST API.
+
+Replaces the previous Playwright-based strategy chain with a single
+POST /negotiations call.  The public interface (``apply_service``,
+``apply``) is kept identical to the old implementation.
+"""
+from __future__ import annotations
+
 import logging
 from typing import Optional
 
-from playwright.async_api import Page
-
 from ..models import ApplyStatus, ApplyResult
-from .browser import browser_manager
-from .anti_fraud import AntiFraud
-from .playwright_utils import check_bot_protection, dump_html
-from .hh_apply_strategies import (
-    LegacyLinkApplyStrategy,
-    DropdownApplyStrategy,
-    ModalApplyStrategy,
-    PostApplyLetterStrategy,
-    select_legacy_resume,
-    check_application_success,
+from .hh_api_client import (
+    hh_api,
+    HHApiError,
+    HHNegotiationsLimitExceeded,
+    HHCaptchaRequired,
+    HHForbidden,
+    HHNotFound,
 )
 
 logger = logging.getLogger(__name__)
 
-async def check_has_questions(page: Page) -> bool:
-    try:
-        url = page.url
-        if "vacancy_response" in url:
-            return True
-    except Exception:
-        pass
-    return False
+# AntiFraud is kept in the signature for backward compat; delays are
+# now handled at a higher level (Scheduler._run_loop).
+from .anti_fraud import AntiFraud
 
 
 class HHApplyService:
-    async def _check_already_applied(self, page: Page) -> bool:
-        locator = page.locator("text=Вы откликнулись")
-        try:
-            return await locator.count() > 0
-        except Exception:
-            return False
+    """Apply to a vacancy using the HH.ru REST API (POST /negotiations)."""
 
     async def apply(
         self,
         url: str,
         message: str = "",
+        *,
         af: Optional[AntiFraud] = None,
         resume_id: str = "",
-        existing_page: Optional[Page] = None,
+        # Kept for backward compat; ignored (no browser used)
+        existing_page=None,
     ) -> ApplyResult:
-        logger.info(
-            f"Applying to: {url}" + (f" (resume={resume_id})" if resume_id else "")
-        )
-        if af is None:
-            from .anti_fraud import AntiFraud as AF
-            from .flow_entity import get_active_flow
+        """
+        Apply to the vacancy at *url* using the mobile API.
 
-            flow = await get_active_flow()
-            af = AF(flow.config if flow else None)
+        Parameters
+        ----------
+        url:
+            Canonical web URL of the vacancy, e.g.
+            ``https://hh.ru/vacancy/12345678``.  The vacancy ID is
+            extracted automatically.
+        message:
+            Cover letter text.
+        resume_id:
+            HH resume identifier (hash string).  Required.
+        af, existing_page:
+            Accepted for backward-compat; not used.
+
+        Returns
+        -------
+        ApplyResult
+            ``SUCCESS``  — application was sent.
+            ``SKIPPED``  — already applied (API reported it).
+            ``ERROR``    — unrecoverable error.
+            ``CAPTCHA``  — HH asked for captcha (very rare via API).
+        """
+        if not resume_id:
+            # Try to load the resume_id from the active flow as a last resort
+            try:
+                from .flow_entity import get_active_flow
+                flow = await get_active_flow()
+                if flow and flow.config.resume_id:
+                    resume_id = flow.config.resume_id
+            except Exception:
+                pass
+
+        if not resume_id:
+            logger.error("apply called without resume_id for %s", url)
+            return ApplyResult(
+                status=ApplyStatus.ERROR,
+                message="resume_id is required for API apply",
+            )
+
+        vacancy_id = self._extract_vacancy_id(url)
+        if not vacancy_id:
+            logger.error("Cannot extract vacancy id from url: %s", url)
+            return ApplyResult(
+                status=ApplyStatus.ERROR,
+                message=f"Cannot extract vacancy ID from URL: {url}",
+            )
+
+        logger.info("Applying to vacancy %s (resume=%s)", vacancy_id, resume_id)
+
+        # Ensure we have a valid API token
+        if not hh_api.is_authenticated:
+            await hh_api.load_token()
+        if not hh_api.is_authenticated:
+            return ApplyResult(
+                status=ApplyStatus.ERROR,
+                message="HH API token not available. Please re-login via 'Авторизация HH (API)'.",
+            )
 
         try:
-            if existing_page:
-                context = existing_page.context
-                page = await context.new_page()
-                page.set_default_timeout(
-                    existing_page._timeout_settings._default_timeout
-                    if hasattr(existing_page, "_timeout_settings")
-                    else 30000
-                )
-                try:
-                    await page.goto(url, wait_until="domcontentloaded", timeout=30000)
-                    logger.debug("Vacancy page loaded")
-                except Exception as e:
-                    logger.warning(f"Navigation timeout: {e}")
+            await hh_api.apply_to_vacancy(
+                vacancy_id=vacancy_id,
+                resume_id=resume_id,
+                message=message,
+            )
+            logger.info("Applied successfully to vacancy %s", vacancy_id)
+            return ApplyResult(status=ApplyStatus.SUCCESS, message="Applied via API")
 
-                result = await self._do_apply(page, message, af, resume_id)
-                try:
-                    await page.close()
-                except Exception:
-                    pass
-                return result
-            else:
-                async with browser_manager.get_page(use_session=True) as page:
-                    try:
-                        await page.goto(
-                            url, wait_until="domcontentloaded", timeout=30000
-                        )
-                        logger.debug("Vacancy page loaded")
-                    except Exception as e:
-                        logger.warning(f"Navigation timeout: {e}")
+        except HHNegotiationsLimitExceeded as e:
+            logger.warning("Daily negotiations limit reached: %s", e)
+            return ApplyResult(
+                status=ApplyStatus.ERROR,
+                message="Достигнут суточный лимит откликов на HH.ru. Попробуйте завтра.",
+            )
 
-                    return await self._do_apply(page, message, af, resume_id)
-
-        except FileNotFoundError as e:
-            logger.error(f"Session file not found: {e}")
-            return ApplyResult(status=ApplyStatus.ERROR, message=str(e))
-        except Exception as e:
-            logger.error(f"Application failed: {e}", exc_info=True)
-            return ApplyResult(status=ApplyStatus.ERROR, message=str(e))
-
-    async def _do_apply(
-        self,
-        page: Page,
-        message: str,
-        af: AntiFraud,
-        resume_id: str,
-    ) -> ApplyResult:
-        if await check_bot_protection(page):
-            af.captcha_detected()
-            logger.warning("Captcha detected on vacancy page")
+        except HHCaptchaRequired as e:
+            logger.warning("Captcha required by HH API: %s", e.captcha_url)
             return ApplyResult(
                 status=ApplyStatus.CAPTCHA,
-                message="Bot protection triggered (captcha)",
+                message=f"Captcha required: {e.captcha_url}",
             )
 
-        af.captcha_cleared()
+        except HHForbidden as e:
+            msg = str(e)
+            # Already applied returns 403 with specific error data
+            errors = (e.data.get("errors") or []) if isinstance(e.data, dict) else []
+            for err in errors:
+                if err.get("value") in ("already_applied", "already-applied"):
+                    logger.info("Already applied to vacancy %s", vacancy_id)
+                    return ApplyResult(
+                        status=ApplyStatus.SKIPPED,
+                        message="Already applied",
+                    )
+            logger.warning("Forbidden when applying to %s: %s", vacancy_id, msg)
+            return ApplyResult(status=ApplyStatus.ERROR, message=f"Forbidden: {msg}")
 
-        if await self._check_already_applied(page):
-            logger.info("Already applied to this vacancy")
-            return ApplyResult(status=ApplyStatus.SKIPPED, message="Already applied")
-
-        if await check_has_questions(page):
-            logger.info("Questionnaire page detected at start. Skipping.")
-            return ApplyResult(status=ApplyStatus.ANALYZED_SKIP, message="requires_questions")
-
-        # 1. Legacy link strategy ("Написать сопроводительное" link on page)
-        result = await LegacyLinkApplyStrategy().try_apply(page, message, resume_id, af)
-        if result:
-            logger.info(f"Cover letter link strategy: {result.status.value}")
-            return result
-
-        apply_btn = page.locator("[data-qa='vacancy-response-link-top']")
-        if await apply_btn.count() == 0:
-            apply_btn = page.locator("[data-qa='vacancy-response-link-bottom']")
-
-        if await apply_btn.count() == 0:
-            logger.warning("Apply button not found")
+        except HHNotFound:
+            logger.warning("Vacancy %s not found (404)", vacancy_id)
             return ApplyResult(
-                status=ApplyStatus.ERROR, message="Apply button not found"
+                status=ApplyStatus.SKIPPED,
+                message="Vacancy not found or archived",
             )
 
-        # 2. Dropdown strategy ("apply with cover letter" arrow menu next to standard apply)
-        result = await DropdownApplyStrategy().try_apply(page, message, resume_id, af)
-        if result:
-            logger.info(f"Dropdown strategy: {result.status.value}")
-            return result
-
-        # Perform the actual standard click on standard apply button
-        await af.pre_action_delay()
-        await apply_btn.first.click()
-        await af.post_action_delay()
-        logger.debug("Clicked standard apply button")
-
-        # Wait a moment for page changes and check for questionnaires/questions
-        await page.wait_for_timeout(2000)
-        if await check_has_questions(page):
-            logger.info("Questions questionnaire page detected. Skipping apply.")
+        except HHApiError as e:
+            logger.error("API error applying to %s: %s", vacancy_id, e)
+            # Check for "already applied" in error body
+            errors = (e.data.get("errors") or []) if isinstance(e.data, dict) else []
+            for err in errors:
+                if err.get("value") in ("already_applied", "already-applied"):
+                    return ApplyResult(status=ApplyStatus.SKIPPED, message="Already applied")
             return ApplyResult(
-                status=ApplyStatus.ANALYZED_SKIP,
-                message="requires_questions"
+                status=ApplyStatus.ERROR,
+                message=f"API error {e.status}: {e.data}",
             )
 
-        # 3. Modern Magritte-based response modal/dialog dialog
-        try:
-            modal_result = await asyncio.wait_for(
-                ModalApplyStrategy().try_apply(page, message, resume_id, af),
-                timeout=40,
-            )
-        except asyncio.TimeoutError:
-            logger.error("Response modal handling exceeded hard 40s timeout")
-            await dump_html(page, "response_modal_hard_timeout")
-            modal_result = ApplyResult(
-                status=ApplyStatus.ERROR, message="Response modal handling timed out"
-            )
+        except Exception as e:
+            logger.error("Unexpected error applying to %s: %s", vacancy_id, e, exc_info=True)
+            return ApplyResult(status=ApplyStatus.ERROR, message=str(e))
 
-        if modal_result:
-            logger.info(f"Response modal strategy: {modal_result.status.value}")
-            return modal_result
+    # ------------------------------------------------------------------
 
-        # 4. Fallback: select resume + legacy post-apply letter flow
-        await select_legacy_resume(page, resume_id)
-
-        result = await PostApplyLetterStrategy().try_apply(page, message, resume_id, af)
-        if result:
-            logger.info(f"Post-apply letter strategy: {result.status.value}")
-            return result
-
-        if await check_application_success(page):
-            logger.info("Application confirmed successful")
-            return ApplyResult(
-                status=ApplyStatus.SUCCESS,
-                message="Applied successfully",
-            )
-        else:
-            logger.info("Applied but status unclear")
-            return ApplyResult(
-                status=ApplyStatus.SUCCESS,
-                message="Applied (status unclear)",
-            )
+    @staticmethod
+    def _extract_vacancy_id(url: str) -> str:
+        import re
+        m = re.search(r"/vacancy/(\d+)", url)
+        if m:
+            return m.group(1)
+        # URL might already be a bare id
+        if url.isdigit():
+            return url
+        return ""
 
 
 apply_service = HHApplyService()

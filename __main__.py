@@ -6,7 +6,6 @@ from loguru import logger
 
 from .config import get_settings
 from .database import init_db, get_setting
-from .services.browser import browser_manager
 from .services.flow_entity import init_flow_table
 
 # Intercept standard library logging and pass to loguru
@@ -68,8 +67,14 @@ async def _on_startup(bot) -> None:
 
     await init_db()
     await init_flow_table()
-    settings = get_settings()
-    await browser_manager.start()
+
+    # Load HH API token into memory
+    from .services.hh_api_client import hh_api
+    await hh_api.load_token()
+    if hh_api.is_authenticated:
+        logger.info("HH API token loaded successfully")
+    else:
+        logger.warning("HH API token not found — run '📱 Авторизация HH (API)' in bot settings")
 
     from .services.gemini import gemini_service
     saved_model = await get_setting("gemini_model", "")
@@ -126,9 +131,16 @@ async def _on_startup(bot) -> None:
 
 
 async def _on_shutdown(bot) -> None:
-    await browser_manager.stop()
+    from .services.hh_api_client import hh_api
+    await hh_api.close()
+    # Also stop browser if it was started for auth/resume operations
+    from .services.browser import browser_manager
+    try:
+        await browser_manager.stop()
+    except Exception:
+        pass
     await bot.session.close()
-    logger.info("Browser stopped, bot shut down.")
+    logger.info("AutoHH bot shut down.")
 
 
 def run_bot() -> None:
