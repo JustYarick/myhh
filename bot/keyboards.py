@@ -7,8 +7,9 @@ from ..services.flow_entity import FlowEntity, FlowConfig
 def main_menu_reply_keyboard() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(keyboard=[
         [KeyboardButton(text="🔴 Ручной режим"), KeyboardButton(text="🔍 Мониторинг")],
-        [KeyboardButton(text="📝 Вопросы"), KeyboardButton(text="📜 История")],
-        [KeyboardButton(text="ℹ️ Статус и Инфо"), KeyboardButton(text="⚙️ Настройки")]
+        [KeyboardButton(text="📂 Потоки"), KeyboardButton(text="📝 Вопросы")],
+        [KeyboardButton(text="📜 История"), KeyboardButton(text="ℹ️ Статус и Инфо")],
+        [KeyboardButton(text="⚙️ Настройки")]
     ], resize_keyboard=True)
 
 

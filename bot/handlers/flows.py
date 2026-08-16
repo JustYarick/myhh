@@ -26,7 +26,7 @@ import re
 from ..keyboards import (
     flows_reply_keyboard,
     flow_detail_reply_keyboard,
-    flow_edit_reply_keyboard,
+    flow_edit_keyboard,
     flow_prompts_reply_keyboard,
 )
 
@@ -203,9 +203,9 @@ async def flow_edit_message_handler(message: Message, state: FSMContext) -> None
         await message.answer("Поток не найден.")
         return
     await message.answer(
-        f"⚙️ <b>Редактирование потока: {flow.name}</b>\n\nИспользуйте кнопки меню ниже для настройки параметров:",
+        f"⚙️ <b>Редактирование потока: {flow.name}</b>\n\nИспользуйте кнопки у сообщения для настройки:",
         parse_mode="HTML",
-        reply_markup=flow_edit_reply_keyboard()
+        reply_markup=flow_edit_keyboard(flow_id, flow.config)
     )
 
 
