@@ -157,8 +157,12 @@ def flow_edit_keyboard(flow_id: int, config) -> InlineKeyboardMarkup:
         InlineKeyboardButton(text=f"Max delay: {config.delay_max}s", callback_data=f"fe_{flow_id}_delay_max"),
     ])
     rows.append([
-        InlineKeyboardButton(text="Prompts", callback_data=f"fe_{flow_id}_prompts"),
-        InlineKeyboardButton(text="Test run", callback_data=f"fe_{flow_id}_test"),
+        InlineKeyboardButton(text="📝 Промпт письма", callback_data=f"fe_{flow_id}_cover_letter_prompt"),
+        InlineKeyboardButton(text="📝 Промпт анализа", callback_data=f"fe_{flow_id}_analysis_prompt"),
+    ])
+    rows.append([
+        InlineKeyboardButton(text="🚫 Черный список", callback_data=f"fe_{flow_id}_exclude_employers"),
+        InlineKeyboardButton(text="🧪 Test run", callback_data=f"fe_{flow_id}_test"),
     ])
     rows.append([InlineKeyboardButton(text="Back", callback_data=f"flow_{flow_id}")])
 
