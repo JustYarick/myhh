@@ -2,8 +2,6 @@ import logging
 from aiogram import Router, F
 from aiogram.types import CallbackQuery, Message
 
-from ...services.hh_auth import hh_auth
-
 logger = logging.getLogger(__name__)
 settings_router = Router()
 
@@ -251,7 +249,7 @@ async def toggle_monitoring_message(message: Message) -> None:
     monitoring_enabled = new_val == "true"
     monitoring_status = "ВКЛЮЧЕН" if monitoring_enabled else "ВЫКЛЮЧЕН"
     
-    from ...services.hh_auth import hh_auth
+
     from ..keyboards import settings_reply_keyboard
     gemini_model = await get_setting("gemini_model", "gemini-2.0-flash")
     tz_offset = int(await get_setting("monitoring_timezone_offset", "3"))
