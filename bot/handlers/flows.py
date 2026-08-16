@@ -154,11 +154,12 @@ async def flow_test_message_handler(message: Message, state: FSMContext) -> None
         sample = cards[:3]
         for idx, c in enumerate(sample):
             desc = await search_service.get_vacancy_description(None, c["url"])
-            from ...services import gemini_service
+            from ...services.gemini import gemini_service
             res = await gemini_service.analyze_vacancy(
                 {"title": c["title"], "url": c["url"], "employer": c["employer"], "description": desc},
                 prompt_template=flow.config.analysis_prompt,
-                resume_text=flow.config.resume_text
+                resume_text=flow.config.resume_text,
+                custom_rules=flow.config.custom_rules,
             )
             await message.answer(
                 f"📄 <b>{idx+1}/{len(sample)}</b>: <a href=\"{c['url']}\">{c['title']}</a>\n"
