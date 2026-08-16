@@ -133,12 +133,6 @@ async def _on_startup(bot) -> None:
 async def _on_shutdown(bot) -> None:
     from .services.hh_api_client import hh_api
     await hh_api.close()
-    # Also stop browser if it was started for auth/resume operations
-    from .services.browser import browser_manager
-    try:
-        await browser_manager.stop()
-    except Exception:
-        pass
     await bot.session.close()
     logger.info("AutoHH bot shut down.")
 

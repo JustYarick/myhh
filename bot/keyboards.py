@@ -238,16 +238,15 @@ def model_list_keyboard(models: list[dict], current_model: str) -> InlineKeyboar
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def settings_reply_keyboard(hh_linked: bool, tz_offset: int = 3, api_ok: bool = False) -> ReplyKeyboardMarkup:
-    hh_button = KeyboardButton(text="🔓 Выйти из HH") if hh_linked else KeyboardButton(text="🔑 Войти в HH")
-    api_button = KeyboardButton(text="🔓 Logout HH API") if api_ok else KeyboardButton(text="📱 Авторизация HH (API)")
+def settings_reply_keyboard(api_ok: bool = False, tz_offset: int = 3) -> ReplyKeyboardMarkup:
+    api_button = KeyboardButton(text="🔓 Удалить токен HH API") if api_ok else KeyboardButton(text="📱 Авторизация HH (API)")
     tz_button = KeyboardButton(text=f"🌐 Часовой пояс: UTC{'+' if tz_offset >= 0 else ''}{tz_offset}")
     keyboard = [
-        [KeyboardButton(text="🤖 Выбрать модель Gemini"), hh_button],
         [api_button],
-        [tz_button, KeyboardButton(text="🚀 Поднятие резюме")],
-        [KeyboardButton(text="🔔 Уведомления"), KeyboardButton(text="🧹 Очистить кэш")],
-        [KeyboardButton(text="🔄 Сбросить лимиты"), KeyboardButton(text="⬅️ Главное меню")]
+        [tz_button, KeyboardButton(text="🚀 Настроить автоподнятие")],
+        [KeyboardButton(text="🤖 Выбрать модель Gemini"), KeyboardButton(text="🔔 Уведомления")],
+        [KeyboardButton(text="🧹 Очистить кэш"), KeyboardButton(text="🔄 Сбросить лимиты")],
+        [KeyboardButton(text="⬅️ Главное меню")]
     ]
     return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
 

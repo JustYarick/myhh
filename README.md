@@ -86,7 +86,6 @@ docker-compose up -d --build
 | TG_BOT_TOKEN | - | Токен Telegram-бота от @BotFather |
 | TG_ALLOWED_USERS | - | ID пользователей Telegram через запятую |
 | GEMINI_API_KEY | - | API-ключ Gemini от Google AI Studio |
-| BROWSER_HEADLESS | True | Запуск браузера в скрывом режиме |
 | LOG_LEVEL | INFO | Уровень логирования проекта (DEBUG, INFO, WARNING, ERROR) |
 
 ---

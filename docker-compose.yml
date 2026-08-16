@@ -9,6 +9,5 @@ services:
     env_file:
       - .env
     environment:
-      - BROWSER_HEADLESS=true
       - DATA_DIR=/app/data
     restart: unless-stopped

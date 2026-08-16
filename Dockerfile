@@ -1,4 +1,4 @@
-FROM mcr.microsoft.com/playwright/python:v1.41.0-jammy
+FROM python:3.11-slim
 
 WORKDIR /app
 
@@ -17,7 +17,6 @@ COPY . /app/autohh/
 
 RUN mkdir -p /app/data
 
-ENV BROWSER_HEADLESS=true
 ENV DATA_DIR=/app/data
 
 ENTRYPOINT ["python", "-m", "autohh"]

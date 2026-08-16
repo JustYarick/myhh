@@ -14,17 +14,10 @@ class Settings(BaseSettings):
     gemini_api_key: str = Field(default="", alias="GEMINI_API_KEY")
     gemini_proxy_url: Optional[str] = Field(default=None, alias="GEMINI_PROXY_URL")
 
-    browser_headless: bool = Field(default=True, alias="BROWSER_HEADLESS")
-    browser_slow_mo: int = Field(default=0, alias="BROWSER_SLOW_MO")
-    page_timeout: int = Field(default=30000, alias="PAGE_TIMEOUT")
     proxy_url: Optional[str] = Field(default=None, alias="PROXY_URL")
 
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
     data_dir: Path = Field(default=Path("./data"), alias="DATA_DIR")
-
-    @property
-    def session_file(self) -> Path:
-        return self.data_dir / "hh_session.json"
 
     @property
     def db_file(self) -> Path:

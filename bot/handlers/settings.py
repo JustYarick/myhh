@@ -111,18 +111,20 @@ async def send_global_settings(message: Message) -> None:
     from ..keyboards import settings_reply_keyboard
     gemini_model = await get_setting("gemini_model", "gemini-2.0-flash")
     tz_offset = int(await get_setting("monitoring_timezone_offset", "3"))
-    hh_ok = hh_auth.session_exists()
-    hh_status = "Linked" if hh_ok else "Not linked"
+    from ...services.hh_api_client import hh_api
+    await hh_api.load_token()
+    api_ok = hh_api.is_authenticated
+    api_status = "✅ Активен" if api_ok else "❌ Не настроен"
     text = (
         f"⚙️ <b>Global Settings</b>\n\n"
         f"🤖 Gemini model: <code>{gemini_model}</code>\n"
-        f"🔑 HH Account: <b>{hh_status}</b>\n"
+        f"📱 HH API токен: <b>{api_status}</b>\n"
         f"🌐 Часовой пояс: <b>UTC{'+' if tz_offset >= 0 else ''}{tz_offset}</b>"
     )
     await message.answer(
         text,
         parse_mode="HTML",
-        reply_markup=settings_reply_keyboard(hh_ok, tz_offset=tz_offset),
+        reply_markup=settings_reply_keyboard(api_ok=api_ok, tz_offset=tz_offset),
     )
 
 

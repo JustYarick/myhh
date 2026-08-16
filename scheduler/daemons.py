@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 from ..config import get_settings
 from .. import database as db
 from ..services.flow_entity import get_active_flow
-from ..services.hh_auth import hh_auth
+from ..services.hh_resume import resume_service
 from .daemon import BackgroundDaemon
 from .runner import monitoring_scheduler, RunState
 from .time_helpers import calculate_next_wait_seconds, is_within_prime_time, get_resumed_sleep_time
@@ -97,7 +97,8 @@ class ResumeUpdaterDaemonService(BackgroundDaemon):
                     continue
 
                 flow = await get_active_flow()
-                if settings.session_file.exists() and flow and flow.config.resume_id:
+                from ..services.hh_api_client import hh_api
+                if hh_api.is_authenticated and flow and flow.config.resume_id:
                     await self._raise_resume(flow.config.resume_id)
 
                 now = datetime.now(timezone.utc)
@@ -125,7 +126,7 @@ class ResumeUpdaterDaemonService(BackgroundDaemon):
                 f"⏳ Начинаю автоматическое поднятие резюме <code>{resume_id}</code>..."
             )
 
-        success, msg = await hh_auth.publish_resume(resume_id)
+        success, msg = await resume_service.publish_resume(resume_id)
 
         if success:
             await db.set_setting(
