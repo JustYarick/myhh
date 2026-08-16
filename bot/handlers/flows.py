@@ -140,6 +140,11 @@ async def flow_test_message_handler(message: Message, state: FSMContext) -> None
     if not flow:
         await message.answer("Поток не найден.")
         return
+
+    if not flow.config.search_url or not flow.config.resume_id:
+        await message.answer("⚠️ У потока должен быть настроен search_url и выбрано резюме для тестового запуска.")
+        return
+
     await message.answer(f"🧪 Запуск тестирования потока: <b>{flow.name}</b>...\nЭто может занять некоторое время.", parse_mode="HTML")
     try:
         from ...services.hh_search import HHSearchService

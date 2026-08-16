@@ -165,7 +165,7 @@ def flow_edit_keyboard(flow_id: int, config) -> InlineKeyboardMarkup:
     ])
     rows.append([
         InlineKeyboardButton(text="🚫 Черный список", callback_data=f"fe_{flow_id}_exclude_employers"),
-        InlineKeyboardButton(text="🧪 Test run", callback_data=f"fe_{flow_id}_test"),
+        InlineKeyboardButton(text="🧪 Test run", callback_data=f"flow_test_{flow_id}"),
     ])
     rows.append([InlineKeyboardButton(text="Back", callback_data=f"flow_{flow_id}")])
 
