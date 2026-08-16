@@ -245,7 +245,6 @@ class HHApiClient:
                     "client_id": _ANDROID_CLIENT_ID,
                     "client_secret": _ANDROID_CLIENT_SECRET,
                     "code": code,
-                    "redirect_uri": f"{HH_ANDROID_SCHEME}://...",
                 },
                 headers=self._base_headers(),
                 allow_redirects=False,
