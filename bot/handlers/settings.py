@@ -238,6 +238,7 @@ async def reset_limits_message(message: Message) -> None:
 async def toggle_monitoring_message(message: Message) -> None:
     if not await _check_access(message.from_user.id):
         return
+    from ...database import get_setting, set_setting
     current = (await get_setting("monitoring_mode", "false")) == "true"
     new_val = "false" if current else "true"
     await set_setting("monitoring_mode", new_val)
