@@ -23,7 +23,6 @@ class DeleteFlowState(StatesGroup):
     confirming = State()
 
 import re
-from ...services.browser import browser_manager
 from ..keyboards import (
     flows_reply_keyboard,
     flow_detail_reply_keyboard,
