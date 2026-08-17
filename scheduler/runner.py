@@ -637,7 +637,7 @@ class Scheduler:
                         )
                         break
 
-                    if last_newest_url and first_id == last_newest_url:
+                    if last_newest_url and first_id == last_newest_url and self.name == "Monitoring":
                         await self._notify("📭 <b>Новых вакансий нет</b> с момента запуска мониторинга. Завершаем.")
                         break
 
@@ -654,7 +654,7 @@ class Scheduler:
 
                     card_id = extract_vacancy_id(card.get("url", ""))
 
-                    if last_newest_url and card_id == last_newest_url:
+                    if last_newest_url and card_id == last_newest_url and self.name == "Monitoring":
                         await self._notify("🏁 <b>Достигнута граница ранее обработанных вакансий.</b> Завершаем.")
                         boundary_reached = True
                         break
