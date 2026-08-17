@@ -240,15 +240,45 @@ class GeminiService:
             text = await self._call_with_retry(prompt)
             logger.info(f"[GEMINI] Analysis FULL response:\n{'='*60}\n{text}\n{'='*60}")
 
-            json_match = re.search(r"\{[^}]+\}", text, re.DOTALL)
+            # Strip markdown code fences (```json ... ```)
+            clean = re.sub(r"```(?:json)?\s*", "", text).strip()
+
+            # Fix common AI mistake: unquoted summary value
+            # e.g. "summary": не тот грейд ... -> "summary": "не тот грейд ..."
+            clean = re.sub(
+                r'"summary"\s*:\s*([^",\}][^,\}]*?)(\s*[,\}])',
+                lambda m: f'"summary": "{m.group(1).strip()}"{m.group(2)}',
+                clean,
+            )
+
+            json_match = re.search(r"\{.*?\}", clean, re.DOTALL)
             if json_match:
-                data = json.loads(json_match.group())
+                try:
+                    data = json.loads(json_match.group())
+                except json.JSONDecodeError:
+                    # Last resort: try to extract key fields with regex
+                    data = {}
+                    for key in ("relevance", "salary_match", "apply", "requires_test"):
+                        m = re.search(rf'"{key}"\s*:\s*([\w.]+)', clean)
+                        if m:
+                            val = m.group(1)
+                            if val in ("true", "false"):
+                                data[key] = val == "true"
+                            else:
+                                try:
+                                    data[key] = int(val)
+                                except ValueError:
+                                    pass
+                    m = re.search(r'"summary"\s*:\s*"([^"]*)"', clean)
+                    if m:
+                        data["summary"] = m.group(1)
+
                 result = VacancyAnalysis(
-                    relevance=data.get("relevance", 0),
-                    salary_match=data.get("salary_match", False),
-                    summary=data.get("summary", ""),
-                    apply=data.get("apply", False),
-                    requires_test=data.get("requires_test", False),
+                    relevance=int(data.get("relevance", 0)),
+                    salary_match=bool(data.get("salary_match", False)),
+                    summary=str(data.get("summary", ""))[:100],
+                    apply=bool(data.get("apply", False)),
+                    requires_test=bool(data.get("requires_test", False)),
                 )
                 logger.info(
                     f"[GEMINI] Analysis result: relevance={result.relevance} "
@@ -258,7 +288,6 @@ class GeminiService:
                 return result
             else:
                 logger.warning(f"Could not parse AI analysis response: {text[:200]}")
-                # Safe default: do NOT apply when we can't parse the response
                 return VacancyAnalysis(relevance=0, apply=False, summary="AI parse error — skipped")
 
         except json.JSONDecodeError as e:
@@ -266,7 +295,6 @@ class GeminiService:
             return VacancyAnalysis(relevance=0, apply=False, summary="JSON parse error — skipped")
         except Exception as e:
             logger.error(f"Vacancy analysis failed after all retries: {e}")
-            # CRITICAL: never apply on API error — skip the vacancy safely
             return VacancyAnalysis(relevance=0, apply=False, summary=f"API error — skipped: {str(e)[:50]}")
 
 

@@ -87,7 +87,7 @@ class Scheduler:
         elif notify_type == "error":
             enabled = (await db.get_setting("notify_error", "true")) == "true"
         elif notify_type == "skip":
-            enabled = (await db.get_setting("notify_skip", "false")) == "true"
+            enabled = (await db.get_setting("notify_skip", "true")) == "true"
 
         if enabled and self._notify_callback:
             try:

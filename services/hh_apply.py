@@ -125,15 +125,14 @@ class HHApplyService:
 
         except HHForbidden as e:
             msg = str(e)
-            # Already applied returns 403 with specific error data
             errors = (e.data.get("errors") or []) if isinstance(e.data, dict) else []
             for err in errors:
                 if err.get("value") in ("already_applied", "already-applied"):
                     logger.info("Already applied to vacancy %s", vacancy_id)
-                    return ApplyResult(
-                        status=ApplyStatus.SKIPPED,
-                        message="Already applied",
-                    )
+                    return ApplyResult(status=ApplyStatus.SKIPPED, message="Already applied")
+                if err.get("value") == "test_required":
+                    logger.info("Test required for vacancy %s — skipping", vacancy_id)
+                    return ApplyResult(status=ApplyStatus.ANALYZED_SKIP, message="requires_questions")
             logger.warning("Forbidden when applying to %s: %s", vacancy_id, msg)
             return ApplyResult(status=ApplyStatus.ERROR, message=f"Forbidden: {msg}")
 
