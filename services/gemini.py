@@ -218,14 +218,16 @@ class GeminiService:
             )
 
         if "{resume}" not in template:
-            template += "\nMy resume: {resume}"
-        salary = vacancy.get("salary", "Not specified")
+            template += "\nМоё резюме: {resume}"
+        salary = vacancy.get("salary", "Не указана")
+        if "{salary}" not in template:
+            salary = ""
         prompt = template.format(
             title=vacancy.get("title", ""),
             employer=vacancy.get("employer", ""),
             description=vacancy.get("description", ""),
             salary=salary,
-            resume=resume_text if resume_text else "No resume provided",
+            resume=resume_text if resume_text else "Резюме не предоставлено",
         )
 
         logger.info(

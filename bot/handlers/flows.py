@@ -150,16 +150,21 @@ async def flow_test_message_handler(message: Message, state: FSMContext) -> None
         from ...services.hh_search import HHSearchService
         from ...services.anti_fraud import AntiFraud
         from ...services.hh_resume import resume_service
+        from ...services.gemini import gemini_service
         search_service = HHSearchService()
         af = AntiFraud(flow.config)
 
-        resume_text = flow.config.resume_text
+        resume_text = flow.config.resume_text or ""
         if not resume_text and flow.config.resume_id:
             await message.answer("⏳ <i>Получаю текст резюме с HH.ru...</i>", parse_mode="HTML")
             resume_text = await resume_service.fetch_resume_text(flow.config.resume_id)
             if resume_text:
                 flow.config.resume_text = resume_text
                 await flow_db.update_flow(flow_id, config=flow.config)
+                logger.info(f"Test run: fetched resume text {len(resume_text)} chars for flow {flow_id}")
+            else:
+                logger.warning(f"Test run: failed to fetch resume text for flow {flow_id}, resume_id={flow.config.resume_id}")
+                await message.answer("⚠️ <i>Не удалось получить текст резюме. Убедитесь что HH авторизован.</i>", parse_mode="HTML")
 
         _, cards, _ = await search_service.search_cards(af, 0, flow.config.search_url)
         if not cards:
@@ -169,11 +174,10 @@ async def flow_test_message_handler(message: Message, state: FSMContext) -> None
         sample = cards[:3]
         for idx, c in enumerate(sample):
             desc = await search_service.get_vacancy_description(None, c["url"])
-            from ...services.gemini import gemini_service
             res = await gemini_service.analyze_vacancy(
                 {"title": c["title"], "url": c["url"], "employer": c["employer"], "description": desc},
                 prompt_template=flow.config.analysis_prompt,
-                resume_text=flow.config.resume_text,
+                resume_text=resume_text,
                 custom_rules=flow.config.custom_rules,
             )
             await message.answer(
