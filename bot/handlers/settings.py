@@ -361,7 +361,7 @@ async def _resume_update_menu_message(message: Message) -> None:
     )
 
 
-@settings_router.message(F.text == "🚀 Поднятие резюме")
+@settings_router.message(F.text == "🚀 Настроить автоподнятие")
 async def resume_update_menu_handler(message: Message) -> None:
     if not await _check_access(message.from_user.id):
         return
