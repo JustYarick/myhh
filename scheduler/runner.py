@@ -548,14 +548,7 @@ class Scheduler:
     async def _run_loop(self, config: FlowConfig) -> None:
         anti_fraud = AntiFraud(config)
         resume_text = config.resume_text
-
         flow_id = await get_active_flow_id()
-        last_newest_url = ""
-        if flow_id:
-            last_newest_url = await db.get_setting(f"last_newest_vacancy_{flow_id}", "")
-            logger.info(f"Loaded boundary url for flow {flow_id}: {last_newest_url}")
-
-        new_boundary_url = None
 
         if not resume_text and config.resume_id:
             logger.info(f"Resume text not cached, fetching for resume_id={config.resume_id}")
@@ -563,7 +556,7 @@ class Scheduler:
                 from ..services.hh_resume import resume_service
                 resume_text = await self._run_interruptible(resume_service.fetch_resume_text(config.resume_id))
             except Exception as e:
-                logger.warning(f"Failed to fetch resume text via browser: {e}")
+                logger.warning(f"Failed to fetch resume text: {e}")
                 resume_text = ""
             if resume_text:
                 config.resume_text = resume_text
@@ -573,205 +566,30 @@ class Scheduler:
             else:
                 logger.warning("Failed to fetch resume text, proceeding without it")
 
-        logger.info(f"Starting run loop: max_pages={config.max_pages}, "
-                     f"search_url={config.search_url[:60] if config.search_url else ''}, "
-                     f"resume={'loaded' if resume_text else 'none'}")
+        logger.info(
+            f"Starting run loop [{self.name}]: search_url={config.search_url[:60] if config.search_url else ''}, "
+            f"resume={'loaded' if resume_text else 'none'}"
+        )
+
+        session_success_count = 0
+        session_skipped_count = 0
+        session_error_count = 0
+        session_total_processed = 0
+        new_boundary_url = None
 
         try:
-            session_success_count = 0
-            session_skipped_count = 0
-            session_error_count = 0
-            session_total_processed = 0
-            consecutive_cached_count = 0
-            first_cached_in_sequence = None
-
-            # Search up to 40 pages (hh.ru limit) to satisfy the target apply limit
-            max_search_pages = 40
-            for page_num in range(max_search_pages):
-                if self._check_stop():
-                    break
-
-                await self._check_pause()
-                if self._check_stop():
-                    break
-
-                allowed, reason = await anti_fraud.check_rate_limits()
-                if not allowed:
-                    await self._notify(f"🛑 Stopping: {reason}", notify_type="error")
-                    break
-
-                if last_newest_url or self.name != "Monitoring":
-                    await self._notify(f"🔍 Searching page <b>{page_num + 1}/{max_search_pages}</b>...")
-                self.state.current_page = page_num + 1
-
-                # A search failure (network blip, API error)
-                # must skip this page, not kill the whole run.
-                try:
-                    _, cards, _ = await self._run_interruptible(
-                        search_service.search_cards(
-                            anti_fraud=anti_fraud,
-                            page_num=page_num,
-                            url=config.search_url,
-                        )
-                    )
-                except Exception as e:
-                    logger.error(f"Search failed on page {page_num + 1}: {e}", exc_info=True)
-                    await self._notify(f"⚠️ Search error on page {page_num + 1}, skipping: {e}", notify_type="error")
-                    continue
-
-                if not cards:
-                    await self._notify(f"📭 No vacancies found on page {page_num + 1}")
-                    break
-
-                if page_num == 0:
-                    first_url = cards[0]["url"]
-                    first_id = extract_vacancy_id(first_url) if first_url else ""
-                    new_boundary_url = first_id
-
-                    # If there's no baseline set, establish it now and stop
-                    if not last_newest_url and self.name == "Monitoring":
-                        await self._notify(
-                            f"🏁 <b>Базовая точка мониторинга установлена</b>:\n"
-                            f"Вакансия ID: <code>{first_id}</code>\n"
-                            f"С этого момента бот будет отслеживать новые вакансии относительно неё."
-                        )
-                        break
-
-                    if last_newest_url and first_id == last_newest_url and self.name == "Monitoring":
-                        await self._notify("📭 <b>Новых вакансий нет</b> с момента запуска мониторинга. Завершаем.")
-                        break
-
-                await self._notify(f"📋 Found <b>{len(cards)}</b> vacancies on page {page_num + 1}")
-
-                boundary_reached = False
-                for i, card in enumerate(cards):
-                    if self._check_stop():
-                        break
-
-                    await self._check_pause()
-                    if self._check_stop():
-                        break
-
-                    card_id = extract_vacancy_id(card.get("url", ""))
-
-                    if last_newest_url and card_id == last_newest_url and self.name == "Monitoring":
-                        await self._notify("🏁 <b>Достигнута граница ранее обработанных вакансий.</b> Завершаем.")
-                        boundary_reached = True
-                        break
-
-                    # Early exit if we encounter 2 consecutive cached vacancies
-                    # (remembers the first cached vacancy of the sequence as the new baseline)
-                    is_applied = await db.was_vacancy_applied(card.get("url", ""))
-                    is_cached = await db.is_vacancy_cached(card.get("url", ""))
-                    if is_applied or is_cached:
-                        if consecutive_cached_count == 0:
-                            first_cached_in_sequence = card_id
-                        consecutive_cached_count += 1
-                        if consecutive_cached_count >= 2:
-                            await self._notify("🏁 <b>Достигнута граница ранее обработанных вакансий (по кэшу).</b> Завершаем.")
-                            new_boundary_url = first_cached_in_sequence
-                            boundary_reached = True
-                            break
-                    else:
-                        consecutive_cached_count = 0
-
-                    allowed, reason = await anti_fraud.check_rate_limits()
-                    if not allowed:
-                        await self._notify(f"🛑 Stopping: {reason}", notify_type="error")
-                        self._stop_event.set()
-                        break
-
-                    # Each vacancy gets its own safety net. Whatever goes
-                    # wrong inside (AI call, apply, DB write) is logged and
-                    # we move on to the next card - it never takes down the
-                    # whole run anymore.
-                    try:
-                        # Wrap vacancy processing with a hard timeout of 3 minutes (180s)
-                        applied = await asyncio.wait_for(
-                            self._process_card(
-                                card, None, anti_fraud, resume_text, config, i, len(cards)
-                            ),
-                            timeout=180.0
-                        )
-                        session_total_processed += 1
-                        if applied:
-                            session_success_count += 1
-                            if session_success_count >= config.target_applies:
-                                await self._notify(f"🎯 <b>Целевой лимит достигнут!</b> Отправлено <b>{session_success_count}</b> откликов за этот запуск.")
-                                self._stop_event.set()
-                                break
-                        else:
-                            session_skipped_count += 1
-                    except _CaptchaPause:
-                        break
-                    except asyncio.CancelledError:
-                        raise
-                    except asyncio.TimeoutError:
-                        session_total_processed += 1
-                        session_error_count += 1
-                        logger.error(
-                            f"Timeout processing vacancy '{card.get('title', '?')}' "
-                            f"({card.get('url', '?')}) - took more than 3 minutes."
-                        )
-                        try:
-                            await db.save_application(
-                                vacancy_url=card.get("url", ""),
-                                title=card.get("title", ""),
-                                employer=card.get("employer", ""),
-                                description="",
-                                cover_letter="",
-                                ai_relevance=0,
-                                ai_analysis="",
-                                status="error",
-                                error_message="Превышен лимит ожидания обработки вакансии (3 минуты)",
-                            )
-                        except Exception as db_err:
-                            logger.error(f"Could not save timed out application record: {db_err}")
-                        
-                        await self._notify(
-                            f"⚠️ <b>Пропуск (Превышен таймаут):</b> <a href=\"{card.get('url', '')}\">{card.get('title', 'Без названия')}</a> @ {card.get('employer', 'Неизвестно')}\n"
-                            f"<i>Процесс обработки вакансии завис и был принудительно остановлен через 3 минуты.</i>",
-                            notify_type="error"
-                        )
-                        continue
-                    except Exception as e:
-                        session_total_processed += 1
-                        session_error_count += 1
-                        logger.error(
-                            f"Failed processing vacancy '{card.get('title', '?')}' "
-                            f"({card.get('url', '?')}): {e}",
-                            exc_info=True,
-                        )
-                        try:
-                            await db.save_application(
-                                vacancy_url=card.get("url", ""),
-                                title=card.get("title", ""),
-                                employer=card.get("employer", ""),
-                                description="",
-                                cover_letter="",
-                                ai_relevance=0,
-                                ai_analysis="",
-                                status="error",
-                                error_message=str(e),
-                            )
-                        except Exception as db_err:
-                            logger.error(f"Could not save failed application record: {db_err}")
-                        
-                        await self._notify(
-                            f"❌ <b>Ошибка обработки вакансии:</b> <a href=\"{card.get('url', '')}\">{card.get('title', 'Без названия')}</a>\n"
-                            f"⚠️ {e}",
-                            notify_type="error"
-                        )
-                        continue
-                    finally:
-                        await vacancy_lock_manager.release(card.get("url", ""))
-
-                if boundary_reached or self._check_stop():
-                    break
-
-                if page_num < config.max_pages - 1:
-                    await anti_fraud.random_delay(is_page_change=True)
-
+            if self.name == "Monitoring":
+                new_boundary_url = await self._run_monitoring_strategy(
+                    config, anti_fraud, resume_text, flow_id,
+                    session_success_count, session_skipped_count,
+                    session_error_count, session_total_processed,
+                )
+            else:
+                await self._run_manual_strategy(
+                    config, anti_fraud, resume_text,
+                    session_success_count, session_skipped_count,
+                    session_error_count, session_total_processed,
+                )
         except asyncio.CancelledError:
             logger.info("Scheduler task cancelled")
         except Exception as e:
@@ -780,7 +598,7 @@ class Scheduler:
         finally:
             if flow_id and new_boundary_url:
                 await db.set_setting(f"last_newest_vacancy_{flow_id}", new_boundary_url)
-                logger.info(f"Saved new newest vacancy url boundary for flow {flow_id}: {new_boundary_url}")
+                logger.info(f"Saved boundary for flow {flow_id}: {new_boundary_url}")
 
             self._run_state = RunState.IDLE
             self.state = BotState()
@@ -802,7 +620,7 @@ class Scheduler:
                             next_run_str += f"{diff_mins} мин"
                     except Exception:
                         pass
-                        
+                last_newest_url = await db.get_setting(f"last_newest_vacancy_{flow_id}", "") if flow_id else ""
                 if last_newest_url:
                     await self._notify(
                         format_monitoring_finished(
@@ -814,9 +632,7 @@ class Scheduler:
                         )
                     )
                 else:
-                    await self._notify(
-                        f"⏱ Следующий запуск: <b>{next_run_str}</b>"
-                    )
+                    await self._notify(f"⏱ Следующий запуск: <b>{next_run_str}</b>")
             else:
                 stats = await db.get_today_stats()
                 await self._notify(
@@ -827,6 +643,294 @@ class Scheduler:
                         skipped=stats["analyzed_skip"] + stats["skipped"],
                     )
                 )
+
+    # ------------------------------------------------------------------
+    # STRATEGY: Manual run
+    # Goal: apply until target_applies reached OR pages exhausted.
+    # - Skips already-applied vacancies individually, never stops early.
+    # - No boundary URL tracking.
+    # ------------------------------------------------------------------
+    async def _run_manual_strategy(
+        self, config: FlowConfig, anti_fraud, resume_text: str,
+        session_success_count: int, session_skipped_count: int,
+        session_error_count: int, session_total_processed: int,
+    ) -> None:
+        max_search_pages = 40
+        for page_num in range(max_search_pages):
+            if self._check_stop():
+                break
+            await self._check_pause()
+            if self._check_stop():
+                break
+
+            allowed, reason = await anti_fraud.check_rate_limits()
+            if not allowed:
+                await self._notify(f"🛑 Stopping: {reason}", notify_type="error")
+                break
+
+            await self._notify(f"🔍 Searching page <b>{page_num + 1}/{max_search_pages}</b>...")
+            self.state.current_page = page_num + 1
+
+            try:
+                _, cards, _ = await self._run_interruptible(
+                    search_service.search_cards(anti_fraud=anti_fraud, page_num=page_num, url=config.search_url)
+                )
+            except Exception as e:
+                logger.error(f"Search failed on page {page_num + 1}: {e}", exc_info=True)
+                await self._notify(f"⚠️ Search error on page {page_num + 1}, skipping: {e}", notify_type="error")
+                continue
+
+            if not cards:
+                await self._notify(f"📭 No vacancies found on page {page_num + 1}")
+                break
+
+            await self._notify(f"📋 Found <b>{len(cards)}</b> vacancies on page {page_num + 1}")
+
+            target_reached = False
+            for i, card in enumerate(cards):
+                if self._check_stop():
+                    break
+                await self._check_pause()
+                if self._check_stop():
+                    break
+
+                # Skip already-applied individually — don't stop the whole run
+                is_applied = await db.was_vacancy_applied(card.get("url", ""))
+                if is_applied:
+                    logger.debug(f"Already applied, skipping: {card.get('url')}")
+                    continue
+
+                allowed, reason = await anti_fraud.check_rate_limits()
+                if not allowed:
+                    await self._notify(f"🛑 Stopping: {reason}", notify_type="error")
+                    self._stop_event.set()
+                    break
+
+                try:
+                    applied = await asyncio.wait_for(
+                        self._process_card(card, None, anti_fraud, resume_text, config, i, len(cards)),
+                        timeout=180.0
+                    )
+                    session_total_processed += 1
+                    if applied:
+                        session_success_count += 1
+                        if session_success_count >= config.target_applies:
+                            await self._notify(
+                                f"🎯 <b>Целевой лимит достигнут!</b> Отправлено <b>{session_success_count}</b> откликов за этот запуск."
+                            )
+                            self._stop_event.set()
+                            target_reached = True
+                            break
+                    else:
+                        session_skipped_count += 1
+                except _CaptchaPause:
+                    break
+                except asyncio.CancelledError:
+                    raise
+                except asyncio.TimeoutError:
+                    session_total_processed += 1
+                    session_error_count += 1
+                    logger.error(f"Timeout processing vacancy '{card.get('title', '?')}' ({card.get('url', '?')})")
+                    await self._save_error_record(card, "Превышен лимит ожидания обработки вакансии (3 минуты)")
+                    await self._notify(
+                        f"⚠️ <b>Пропуск (Превышен таймаут):</b> <a href=\"{card.get('url', '')}\">{card.get('title', 'Без названия')}</a> @ {card.get('employer', 'Неизвестно')}\n"
+                        f"<i>Процесс обработки вакансии завис и был принудительно остановлен через 3 минуты.</i>",
+                        notify_type="error"
+                    )
+                    continue
+                except Exception as e:
+                    session_total_processed += 1
+                    session_error_count += 1
+                    logger.error(f"Failed processing vacancy '{card.get('title', '?')}' ({card.get('url', '?')}): {e}", exc_info=True)
+                    await self._save_error_record(card, str(e))
+                    await self._notify(
+                        f"❌ <b>Ошибка обработки вакансии:</b> <a href=\"{card.get('url', '')}\">{card.get('title', 'Без названия')}</a>\n⚠️ {e}",
+                        notify_type="error"
+                    )
+                    continue
+                finally:
+                    await vacancy_lock_manager.release(card.get("url", ""))
+
+            if target_reached or self._check_stop():
+                break
+
+            if page_num < config.max_pages - 1:
+                await anti_fraud.random_delay(is_page_change=True)
+
+    # ------------------------------------------------------------------
+    # STRATEGY: Monitoring run
+    # Goal: process only NEW vacancies since last run boundary.
+    # - On first run: establish baseline, stop.
+    # - Subsequent runs: stop at boundary URL or 2 consecutive cached.
+    # ------------------------------------------------------------------
+    async def _run_monitoring_strategy(
+        self, config: FlowConfig, anti_fraud, resume_text: str, flow_id,
+        session_success_count: int, session_skipped_count: int,
+        session_error_count: int, session_total_processed: int,
+    ) -> str | None:
+        last_newest_url = ""
+        if flow_id:
+            last_newest_url = await db.get_setting(f"last_newest_vacancy_{flow_id}", "")
+            logger.info(f"Monitoring boundary for flow {flow_id}: {last_newest_url or 'not set'}")
+
+        new_boundary_url = None
+        max_search_pages = 40
+        consecutive_cached_count = 0
+        first_cached_in_sequence = None
+
+        for page_num in range(max_search_pages):
+            if self._check_stop():
+                break
+            await self._check_pause()
+            if self._check_stop():
+                break
+
+            allowed, reason = await anti_fraud.check_rate_limits()
+            if not allowed:
+                await self._notify(f"🛑 Stopping: {reason}", notify_type="error")
+                break
+
+            if last_newest_url:
+                await self._notify(f"🔍 Searching page <b>{page_num + 1}/{max_search_pages}</b>...")
+            self.state.current_page = page_num + 1
+
+            try:
+                _, cards, _ = await self._run_interruptible(
+                    search_service.search_cards(anti_fraud=anti_fraud, page_num=page_num, url=config.search_url)
+                )
+            except Exception as e:
+                logger.error(f"Search failed on page {page_num + 1}: {e}", exc_info=True)
+                await self._notify(f"⚠️ Search error on page {page_num + 1}, skipping: {e}", notify_type="error")
+                continue
+
+            if not cards:
+                await self._notify(f"📭 No vacancies found on page {page_num + 1}")
+                break
+
+            if page_num == 0:
+                first_id = extract_vacancy_id(cards[0]["url"]) if cards[0].get("url") else ""
+                new_boundary_url = first_id
+
+                # First ever run — establish baseline and stop
+                if not last_newest_url:
+                    await self._notify(
+                        f"🏁 <b>Базовая точка мониторинга установлена</b>:\n"
+                        f"Вакансия ID: <code>{first_id}</code>\n"
+                        f"С этого момента бот будет отслеживать новые вакансии относительно неё."
+                    )
+                    break
+
+                # No new vacancies since last run
+                if first_id == last_newest_url:
+                    await self._notify("📭 <b>Новых вакансий нет</b> с момента запуска мониторинга. Завершаем.")
+                    break
+
+            await self._notify(f"📋 Found <b>{len(cards)}</b> vacancies on page {page_num + 1}")
+
+            boundary_reached = False
+            for i, card in enumerate(cards):
+                if self._check_stop():
+                    break
+                await self._check_pause()
+                if self._check_stop():
+                    break
+
+                card_id = extract_vacancy_id(card.get("url", ""))
+
+                # Hit the boundary — stop
+                if last_newest_url and card_id == last_newest_url:
+                    await self._notify("🏁 <b>Достигнута граница ранее обработанных вакансий.</b> Завершаем.")
+                    boundary_reached = True
+                    break
+
+                # 2 consecutive cached → boundary by cache
+                is_applied = await db.was_vacancy_applied(card.get("url", ""))
+                is_cached = await db.is_vacancy_cached(card.get("url", ""))
+                if is_applied or is_cached:
+                    if consecutive_cached_count == 0:
+                        first_cached_in_sequence = card_id
+                    consecutive_cached_count += 1
+                    if consecutive_cached_count >= 2:
+                        await self._notify("🏁 <b>Достигнута граница ранее обработанных вакансий (по кэшу).</b> Завершаем.")
+                        new_boundary_url = first_cached_in_sequence
+                        boundary_reached = True
+                        break
+                else:
+                    consecutive_cached_count = 0
+
+                allowed, reason = await anti_fraud.check_rate_limits()
+                if not allowed:
+                    await self._notify(f"🛑 Stopping: {reason}", notify_type="error")
+                    self._stop_event.set()
+                    break
+
+                try:
+                    applied = await asyncio.wait_for(
+                        self._process_card(card, None, anti_fraud, resume_text, config, i, len(cards)),
+                        timeout=180.0
+                    )
+                    session_total_processed += 1
+                    if applied:
+                        session_success_count += 1
+                        if session_success_count >= config.target_applies:
+                            await self._notify(
+                                f"🎯 <b>Целевой лимит достигнут!</b> Отправлено <b>{session_success_count}</b> откликов за этот запуск."
+                            )
+                            self._stop_event.set()
+                            break
+                    else:
+                        session_skipped_count += 1
+                except _CaptchaPause:
+                    break
+                except asyncio.CancelledError:
+                    raise
+                except asyncio.TimeoutError:
+                    session_total_processed += 1
+                    session_error_count += 1
+                    logger.error(f"Timeout processing vacancy '{card.get('title', '?')}' ({card.get('url', '?')})")
+                    await self._save_error_record(card, "Превышен лимит ожидания обработки вакансии (3 минуты)")
+                    await self._notify(
+                        f"⚠️ <b>Пропуск (Превышен таймаут):</b> <a href=\"{card.get('url', '')}\">{card.get('title', 'Без названия')}</a> @ {card.get('employer', 'Неизвестно')}\n"
+                        f"<i>Процесс обработки вакансии завис и был принудительно остановлен через 3 минуты.</i>",
+                        notify_type="error"
+                    )
+                    continue
+                except Exception as e:
+                    session_total_processed += 1
+                    session_error_count += 1
+                    logger.error(f"Failed processing vacancy '{card.get('title', '?')}' ({card.get('url', '?')}): {e}", exc_info=True)
+                    await self._save_error_record(card, str(e))
+                    await self._notify(
+                        f"❌ <b>Ошибка обработки вакансии:</b> <a href=\"{card.get('url', '')}\">{card.get('title', 'Без названия')}</a>\n⚠️ {e}",
+                        notify_type="error"
+                    )
+                    continue
+                finally:
+                    await vacancy_lock_manager.release(card.get("url", ""))
+
+            if boundary_reached or self._check_stop():
+                break
+
+            if page_num < config.max_pages - 1:
+                await anti_fraud.random_delay(is_page_change=True)
+
+        return new_boundary_url
+
+    async def _save_error_record(self, card: dict, error_message: str) -> None:
+        try:
+            await db.save_application(
+                vacancy_url=card.get("url", ""),
+                title=card.get("title", ""),
+                employer=card.get("employer", ""),
+                description="",
+                cover_letter="",
+                ai_relevance=0,
+                ai_analysis="",
+                status="error",
+                error_message=error_message,
+            )
+        except Exception as db_err:
+            logger.error(f"Could not save error record: {db_err}")
 
     def get_status_text(self) -> str:
         if self._run_state == RunState.RUNNING:
