@@ -76,7 +76,8 @@ def format_apply_success(
     cover_letter: Optional[str] = None,
 ) -> str:
     relevance_str = f" | {relevance}/10" if relevance is not None else ""
-    summary_str = f"\n💬 <b>Анализ:</b> {summary}" if summary else ""
+    summary = summary if summary else "Комментарий ИИ отсутствует"
+    summary_str = f"\n💬 <b>Анализ:</b> {summary}"
     cover_preview = f"\n\n📝 <b>Сопроводительное письмо:</b>\n{cover_letter}" if cover_letter else "\n📝 <b>Сопроводительное:</b> —"
     return (
         f"✅ <b>Успешный отклик!</b>\n"

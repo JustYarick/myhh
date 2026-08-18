@@ -306,6 +306,7 @@ class Scheduler:
             url=card["url"],
             employer=card["employer"],
             description=description,
+            salary=card.get("salary", ""),
         )
 
         if self._check_stop():
@@ -315,15 +316,23 @@ class Scheduler:
         analysis_result = None
         try:
             cached_res = await db.get_cached_vacancy_result(vacancy.url)
-            if cached_res and cached_res.get("ai_relevance") is not None and cached_res.get("result") != "parsed":
+            cached_summary = (cached_res or {}).get("ai_summary") or ""
+            if (
+                cached_res
+                and cached_res.get("ai_relevance") is not None
+                and cached_res.get("result") != "parsed"
+                and cached_summary
+            ):
                 from ..models import VacancyAnalysis
                 analysis_result = VacancyAnalysis(
                     relevance=cached_res["ai_relevance"],
                     salary_match=False,
-                    summary=cached_res["ai_summary"] or "",
+                    summary=cached_summary,
                     apply=(cached_res["result"] != "analyzed_skip"),
                 )
                 logger.info(f"Using cached AI analysis for {vacancy.title}: relevance={analysis_result.relevance}")
+            elif cached_res and cached_res.get("ai_relevance") is not None and cached_res.get("result") != "parsed":
+                logger.info(f"Re-analyzing {vacancy.title}: cached analysis has empty summary")
         except Exception as cache_err:
             logger.debug(f"Failed to read AI cache: {cache_err}")
 
@@ -488,9 +497,10 @@ class Scheduler:
                 notify_type="info"
             )
         else:
+            reason = analysis_result.summary or "(ИИ не указал причину)"
             await self._notify(
                 f"⏭ <b>Пропущено</b> (Релевантность={analysis_result.relevance}/10): <a href=\"{vacancy.url}\">{vacancy.title}</a> @ {vacancy.employer}\n"
-                f"<i>{analysis_result.summary}</i>",
+                f"<i>{reason}</i>",
                 notify_type="skip"
             )
 

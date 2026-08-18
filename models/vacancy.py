@@ -16,6 +16,7 @@ class Vacancy(BaseModel):
     url: str
     employer: str
     description: str = ""
+    salary: str = ""
 
 
 class ApplyResult(BaseModel):

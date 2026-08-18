@@ -35,12 +35,13 @@ DEFAULT_ANALYSIS_PROMPT = (
     "Зарплата: {salary}\n"
     "Резюме: {resume}\n\n"
     "Правила relevance (1-10):\n"
-    "1. Грейд: Junior на Middle -> 5-6 (apply=true). Junior на Senior/Lead -> 1-3 (apply=false).\n"
-    "2. Опыт: Требуется 1-3 г., а у кандидата <1 г. -> 6-7 (apply=true). Требуется 3+ г., а у кандидата <1 г. -> 1-3 (apply=false).\n"
-    "3. Стек: Совпадает на 50%+ -> 5-8. Не совпадает -> 1-3. Роль не по профилю (обучение, продажи, техпис) -> 1 (apply=false).\n"
+    "Описание: оценивает в первую очередь СОВПАДЕНИЕ СТЕКА И РОЛИ, а не требуемый опыт.\n"
+    "1. Грейд: Junior на Junior/Middle -> 5-8 (apply=true). Junior на Senior/Lead -> снижай умеренно до 4-6 (apply=true), если стек совпал.\n"
+    "2. Опыт: Требуется 1-3 г., а у кандидата <1 г. -> 6-7 (apply=true). Требуется 3+ г., а у кандидата <1 г. -> 4-6 (apply=true) при хорошем стеке. Если лет опыта в резюме не видно - не занижай, суди по стеку.\n"
+    "3. Стек: Совпадает на 50%+ -> 7-9. Слабо совпадает -> 2-3. Роль не по профилю (обучение, продажи, техпис, другая специализация) -> 1-2 (apply=false).\n"
     "4. Ловушки/Тесты: Если требуется тест/опросник или есть кодовое слово (банан, блинчики) -> 1, apply=false, requires_test=true.\n\n"
-    "Верни строго JSON:\n"
-    '{{"relevance": 1-10, "salary_match": true/false, "summary": "пояснение до 60 знаков", "apply": true/false, "requires_test": true/false}}\n'
+    "Верни строго JSON. Поле summary ОБЯЗАТЕЛЬНО заполни краткой причиной (до 60 знаков) - не может быть пустым:\n"
+    '{{"relevance": 1-10, "salary_match": true/false, "summary": "краткая причина оценки", "apply": true/false, "requires_test": true/false}}\n'
     "apply=true только если relevance>=4 и requires_test=false."
 )
 
@@ -219,7 +220,7 @@ class GeminiService:
 
         if "{resume}" not in template:
             template += "\nМоё резюме: {resume}"
-        salary = vacancy.get("salary", "Не указана")
+        salary = vacancy.get("salary") or "Не указана"
         if "{salary}" not in template:
             salary = ""
         prompt = template.format(

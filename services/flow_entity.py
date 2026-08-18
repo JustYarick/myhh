@@ -148,6 +148,13 @@ async def migrate_existing_flows_prompts() -> None:
         if "Rate relevance of vacancy" in flow.config.analysis_prompt:
             flow.config.analysis_prompt = FlowConfig().analysis_prompt
             updated = True
+        if (
+            "Кандидат Junior/Intern, а вакансия Senior/Lead" in flow.config.analysis_prompt
+            and "совпадения СТЕКА И РОЛИ" not in flow.config.analysis_prompt
+        ):
+            # Обновляем устаревшую жёсткую версию промпта (авто-1-3 при недоборе грейда)
+            flow.config.analysis_prompt = FlowConfig().analysis_prompt
+            updated = True
         
         if updated:
             await update_flow(flow.id, config=flow.config)
