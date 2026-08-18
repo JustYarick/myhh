@@ -118,7 +118,7 @@ def format_scheduler_status(
 ) -> str:
     captcha_str = "⚠️ Обнаружена" if captcha_detected else "✅ Отсутствует"
     return (
-        f"ℹ️ <b>Статус авто-откликщика:</b>\n"
+        f"ℹ️ <b>Статус авто-откликов:</b>\n"
         f"👤 <b>Режим:</b> {run_state_name}\n"
         f"📄 <b>Текущая страница:</b> {page}\n"
         f"📋 <b>Обработано вакансий:</b> {processed}\n"

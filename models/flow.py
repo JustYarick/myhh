@@ -81,9 +81,19 @@ class FlowConfig:
                 lines.append(f"📋 Найдено: <b>{self.vacancy_count}</b> вакансий")
             resume_status = f"загружено ({len(self.resume_text)} симв.)" if self.resume_text else "не загружено"
             resume_icon = "✅" if self.resume_text else "❌"
-            lines.append(f"{resume_icon} Резюме: {resume_status}")
+            resume_id_str = f" (ID: {self.resume_id})" if self.resume_id else ""
+            lines.append(f"{resume_icon} Резюме{resume_id_str}: {resume_status}")
             lines.append(f"🎯 Цель откликов: <b>{self.target_applies}</b>")
             lines.append(f"⏱ Лимиты: <b>{self.max_apps_per_day}</b>/день, <b>{self.max_apps_per_hour}</b>/час")
+            lines.append(f"📄 Макс. страниц: <b>{self.max_pages}</b>")
+            lines.append(f"⏳ Паузы: <b>{self.delay_min:.0f}-{self.delay_max:.0f}</b> сек. (страница: <b>{self.delay_between_pages:.0f}</b> сек.)")
+            if self.auto_start_hour is not None:
+                lines.append(f"⏰ Расписание: <b>{self.auto_start_hour:02d}:00 — {self.auto_stop_hour:02d}:00</b>")
+            if self.custom_rules:
+                rules_preview = self.custom_rules.strip()
+                if len(rules_preview) > 60:
+                    rules_preview = rules_preview[:60] + "..."
+                lines.append(f"📋 Доп. правила: <code>{rules_preview}</code>")
             if self.exclude_employers:
                 lines.append(f"🚫 Черный список: <code>{self.exclude_employers}</code>")
         else:

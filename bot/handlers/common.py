@@ -107,47 +107,44 @@ async def resume_callback(callback: CallbackQuery) -> None:
 async def _get_full_stats_text() -> str:
     stats = await db.get_today_stats()
     stats_list = await db.get_stats_range(7)
+    total_applied = stats['total_applied']
+    successful = stats['successful']
+    errors = stats['errors']
+    skipped = stats['skipped'] + stats['analyzed_skip']
+    success_rate = round(successful / total_applied * 100) if total_applied else 0
+
+    yesterday = None
+    if len(stats_list) > 1:
+        yesterday = stats_list[1]
+
     lines = [
-        "📊 <b>Statistics</b>",
-        f"Today ({stats['date']}):",
-        f"  📨 Total Applied: <b>{stats['total_applied']}</b>",
-        f"  ✅ Success: <b>{stats['successful']}</b>",
-        f"  ❌ Errors: <b>{stats['errors']}</b>",
-        f"  ⏭ Skipped: <b>{stats['skipped']}</b>",
-        f"  🤖 AI Skipped: <b>{stats['analyzed_skip']}</b>",
-        "",
-        "Last 7 days:"
+        "📊 <b>Статистика</b>",
+        f"Сегодня ({stats['date']}):",
+        f"  📨 Всего обработано: <b>{total_applied}</b>",
+        f"  ✅ Успешных откликов: <b>{successful}</b>",
+        f"  ⏭ Пропущено (ИИ/фильтры): <b>{skipped}</b>",
+        f"  ❌ Ошибок: <b>{errors}</b>",
+        f"  🎯 Успешность: <b>{success_rate}%</b>",
     ]
+    if yesterday:
+        y_success = round(yesterday['successful'] / yesterday['total_applied'] * 100) if yesterday['total_applied'] else 0
+        lines.append(
+            f"Вчера ({yesterday['date']}): <b>{yesterday['total_applied']}</b> всего (✅ {yesterday['successful']} / ❌ {yesterday['errors']}, {y_success}%)"
+        )
+    lines.append("")
+    lines.append("Последние 7 дней:")
     if not stats_list:
-        lines.append("  <i>No history data available.</i>")
+        lines.append("  <i>Нет данных за неделю.</i>")
     else:
         for s in stats_list:
             lines.append(
-                f"  <code>{s['date']}</code>: {s['total_applied']} total (✅ {s['successful']} / ❌ {s['errors']})"
+                f"  <code>{s['date']}</code>: {s['total_applied']} всего (✅ {s['successful']} / ❌ {s['errors']})"
             )
     return "\n".join(lines)
 
 
 @common_router.callback_query(F.data == "stats")
 async def stats_callback(callback: CallbackQuery) -> None:
-    if not await _check_access(callback.from_user.id):
-        return
-    await callback.answer()
-    text = await _get_full_stats_text()
-    await callback.message.edit_text(text, parse_mode="HTML")
-
-
-@common_router.callback_query(F.data == "stats_today")
-async def stats_today_callback(callback: CallbackQuery) -> None:
-    if not await _check_access(callback.from_user.id):
-        return
-    await callback.answer()
-    text = await _get_full_stats_text()
-    await callback.message.edit_text(text, parse_mode="HTML")
-
-
-@common_router.callback_query(F.data == "stats_week")
-async def stats_week_callback(callback: CallbackQuery) -> None:
     if not await _check_access(callback.from_user.id):
         return
     await callback.answer()
@@ -162,16 +159,22 @@ async def history_callback(callback: CallbackQuery) -> None:
     await callback.answer()
     apps = await db.get_recent_applications(10)
     if not apps:
-        text = "📭 <i>No applications yet.</i>"
+        text = "📭 <i>История откликов пуста.</i>"
     else:
-        lines = ["📜 <b>Recent applications</b>"]
+        lines = ["📜 <b>Последние отклики:</b>"]
         for app in apps:
             icon = status_emoji(app["status"])
+            err = app.get("error_message") or ""
+            dt = app.get("created_at", "")[:16]
             lines.append(
                 f"  {icon} <b>{app['title'][:40]}</b> @ <i>{app['employer'][:20]}</i>"
             )
+            if app.get("vacancy_url"):
+                lines.append(f"     <a href=\"{app['vacancy_url']}\">открыть вакансию</a> • {dt}")
+            if err:
+                lines.append(f"     <i>{err[:60]}</i>")
         text = "\n".join(lines)
-    await callback.message.edit_text(text, parse_mode="HTML")
+    await callback.message.edit_text(text, parse_mode="HTML", disable_web_page_preview=True)
 
 
 @common_router.callback_query(F.data == "status")
@@ -402,11 +405,17 @@ async def history_message(message: Message) -> None:
         lines = ["📜 <b>Последние отклики:</b>"]
         for app in apps:
             icon = status_emoji(app["status"])
+            err = app.get("error_message") or ""
+            dt = app.get("created_at", "")[:16]
             lines.append(
                 f"  {icon} <b>{app['title'][:40]}</b> @ <i>{app['employer'][:20]}</i>"
             )
+            if app.get("vacancy_url"):
+                lines.append(f"     <a href=\"{app['vacancy_url']}\">открыть вакансию</a> • {dt}")
+            if err:
+                lines.append(f"     <i>{err[:60]}</i>")
         text = "\n".join(lines)
-    await message.answer(text, parse_mode="HTML")
+    await message.answer(text, parse_mode="HTML", disable_web_page_preview=True)
 
 
 @common_router.message(F.text == "📝 Вопросы")
@@ -418,12 +427,33 @@ async def vacancies_with_questions_message(message: Message) -> None:
         await message.answer("Нет сохраненных вакансий с вопросами.")
         return
     
-    lines = ["📝 <b>Вакансии с вопросами (последние 15):</b>\n"]
+    lines = [f"📝 <b>Вакансии с вопросами (новых: {len(vacancies)}):</b>\n"]
     for idx, v in enumerate(vacancies):
         dt = v["created_at"]
         lines.append(f"{idx+1}. <a href=\"{v['vacancy_url']}\">{v['title']}</a> @ <i>{v['employer']}</i> ({dt})")
     
     await message.answer("\n".join(lines), parse_mode="HTML", disable_web_page_preview=True)
+
+
+@common_router.message(F.text == "📚 Помощь")
+async def help_message(message: Message) -> None:
+    if not await _check_access(message.from_user.id):
+        return
+    text = (
+        "❓ <b>Помощь по AutoHH Bot</b>\n\n"
+        "📂 <b>Потоки</b> — настройка и управление профилями вакансий.\n"
+        "Внутри потока: <b>⚙️ Редактировать</b> (ссылка поиска, резюме, лимиты, задержки, расписание),\n"
+        "<b>🔄 Счётчик вакансий</b>, <b>🧪 Тестовый запуск</b>.\n\n"
+        "▶️ <b>Ручной режим</b> — запуск откликов вручную (Запуск/Пауза/Стоп).\n"
+        "🔍 <b>Мониторинг</b> — автоматический обход новых вакансий по интервалу.\n"
+        "📝 <b>Вопросы</b> — вакансии, где требуется ответить на вопросы работодателя.\n"
+        "📜 <b>История</b> — последние отклики и ошибки.\n"
+        "📊 <b>Статистика</b> — счётчики за день/неделю.\n"
+        "ℹ️ <b>Статус и Инфо</b> — аккаунт HH, токен, состояние планировщиков.\n"
+        "⚙️ <b>Настройки</b> — авторизация HH, модель Gemini, часовой пояс, уведомления.\n\n"
+        "💡 Начинайте с <b>📂 Потоки</b>: создайте поток, настройте ссылку поиска и выберите резюме."
+    )
+    await message.answer(text, parse_mode="HTML")
 
 
 @common_router.message(F.text.in_({"⚙️ Settings", "⚙️ Настройки"}))
@@ -435,7 +465,6 @@ async def settings_message(message: Message) -> None:
 
 
 @common_router.message(F.text.in_({"⬅️ Back to Main Menu", "⬅️ Главное меню"}))
-@common_router.message(F.text.in_({"📂 Back to Flows", "📂 Назад к Потокам"}))
 async def back_to_main_menu_message(message: Message) -> None:
     if not await _check_access(message.from_user.id):
         return
@@ -450,12 +479,33 @@ async def global_status_info_message(message: Message) -> None:
     from ...services.hh_api_client import hh_api
     from ...scheduler import manual_scheduler, monitoring_scheduler, RunState
     from ...services.flow_entity import get_active_flow
+    from ..utils.formatters import format_next_run_text
     
     # Global settings
     gemini_model = await db.get_setting("gemini_model", "gemini-2.0-flash")
     tz_offset = int(await db.get_setting("monitoring_timezone_offset", "3"))
     await hh_api.load_token()
     hh_ok = hh_api.is_authenticated
+    hh_account = "Без авторизации"
+    token_expiry = ""
+    if hh_ok:
+        try:
+            me = await hh_api.get_me()
+            if isinstance(me, dict):
+                first = (me.get("first_name") or "")
+                last = (me.get("last_name") or "")
+                hh_account = f"{(first + ' ' + last).strip() or me.get('id', '')}"
+        except Exception as e:
+            logger.warning(f"get_me failed: {e}")
+            hh_account = "Не удалось получить имя"
+        try:
+            expires_at = int(await db.get_setting("hh_token_expires_at", "0"))
+            if expires_at:
+                from datetime import datetime, timezone
+                exp_dt = datetime.fromtimestamp(expires_at, tz=timezone.utc)
+                token_expiry = f"\n• Срок токена: до <code>{exp_dt.strftime('%d.%m.%Y %H:%M')} UTC</code>"
+        except Exception as e:
+            logger.warning(f"token expiry parse failed: {e}")
     hh_status = "🟢 Активен" if hh_ok else "🔴 Не настроен"
     
     # Local time calculation
@@ -479,9 +529,21 @@ async def global_status_info_message(message: Message) -> None:
     interval = int(await db.get_setting("monitoring_interval", "30"))
     jitter = int(await db.get_setting("monitoring_jitter", "0"))
     prime_time = await db.get_setting("monitoring_prime_time", "24/7")
+
+    monitoring_next_run_text = await format_next_run_text("monitoring_next_run", monitoring_enabled)
     
     active_flow = await get_active_flow()
     flow_name = active_flow.name if active_flow else "Отсутствует"
+    flow_detail = ""
+    if active_flow:
+        flow_vacancies = active_flow.config.vacancy_count
+        flow_target = active_flow.config.target_applies
+        flow_resume = "загружено" if active_flow.config.resume_text else "не загружено"
+        flow_detail = (
+            f"  • 📋 Вакансий по ссылке: <b>{flow_vacancies}</b>\n"
+            f"  • 🎯 Цель за запуск: <b>{flow_target}</b>\n"
+            f"  • 📄 Резюме: <b>{flow_resume}</b>"
+        )
     
     # Saved boundary
     boundary_id = "Отсутствует"
@@ -492,12 +554,15 @@ async def global_status_info_message(message: Message) -> None:
     stats = await db.get_today_stats()
     
     text = (
-        f"🤖 <b>AutoHH: Статус и Системный дашборд</b>\n\n"
+        f"🤖 <b>AutoHH: Статус и Инфо</b>\n\n"
         f"⚙️ <b>Системная информация:</b>\n"
         f"• Аккаунт HH.ru: <b>{hh_status}</b>\n"
+        f"  • Имя: <b>{hh_account}</b>{token_expiry}\n"
         f"• Модель ИИ: <code>{gemini_model}</code>\n"
-        f"• Активный поток: <b>{flow_name}</b>\n"
         f"• Местное время: <code>{time_str}</code> (UTC{'+' if tz_offset >= 0 else ''}{tz_offset})\n\n"
+        f"📂 <b>Активный поток:</b>\n"
+        f"  • Название: <b>{flow_name}</b>\n"
+        f"{flow_detail}\n\n"
         f"▶️ <b>Ручной режим:</b>\n"
         f"• Статус: <b>{manual_state}</b>\n\n"
         f"🔍 <b>Режим мониторинга:</b>\n"
@@ -505,7 +570,8 @@ async def global_status_info_message(message: Message) -> None:
         f"• Интервал: <b>каждые {interval} мин</b>\n"
         f"• Рандом (Jitter): <b>{jitter if jitter > 0 else 'Выкл'} мин</b>\n"
         f"• Время работы: <b>{prime_time}</b>\n"
-        f"• Точка отсчета (ID): <code>{boundary_id}</code>\n\n"
+        f"• Точка отсчета (ID): <code>{boundary_id}</code>\n"
+        f"{monitoring_next_run_text}\n"
         f"📊 <b>Статистика за сегодня:</b>\n"
         f"• Обработано всего: <b>{stats['total_applied']}</b>\n"
         f"• Успешных откликов: <b>{stats['successful']}</b>\n"

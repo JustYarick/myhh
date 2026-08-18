@@ -416,18 +416,6 @@ async def get_setting(key: str, default: str = "") -> str:
         return row[0] if row else default
 
 
-async def set_setting(key: str, value: str) -> None:
-    db_path = _get_db_path()
-    async with aiosqlite.connect(str(db_path)) as db:
-        await db.execute(
-            """INSERT INTO bot_settings (key, value, updated_at)
-               VALUES (?, ?, CURRENT_TIMESTAMP)
-               ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=CURRENT_TIMESTAMP""",
-            (key, value),
-        )
-        await db.commit()
-
-
 async def get_all_settings() -> dict[str, str]:
     db_path = _get_db_path()
     async with aiosqlite.connect(str(db_path)) as db:

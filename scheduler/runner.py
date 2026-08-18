@@ -87,7 +87,7 @@ class Scheduler:
         elif notify_type == "error":
             enabled = (await db.get_setting("notify_error", "true")) == "true"
         elif notify_type == "skip":
-            enabled = (await db.get_setting("notify_skip", "true")) == "true"
+            enabled = (await db.get_setting("notify_skip", "false")) == "true"
 
         if enabled and self._notify_callback:
             try:
@@ -136,7 +136,7 @@ class Scheduler:
 
     async def start(self) -> None:
         if self._run_state == RunState.RUNNING:
-            await self._notify("⚠️ Already running!")
+            await self._notify("⚠️ Уже запущен!")
             return
 
         # Check that HH API token is available
@@ -150,7 +150,7 @@ class Scheduler:
 
         flow = await get_active_flow()
         if not flow:
-            await self._notify("❌ No active flow. Create and activate one first.")
+            await self._notify("❌ Нет активного потока. Создайте и активируйте поток в меню «📂 Потоки».")
             return
 
         # Prepare start notification text
@@ -191,7 +191,7 @@ class Scheduler:
 
     async def stop(self) -> None:
         if self._run_state == RunState.IDLE:
-            await self._notify("⚠️ Not running!")
+            await self._notify("⚠️ Планировщик не запущен!")
             return
 
         self._stop_event.set()
@@ -207,23 +207,23 @@ class Scheduler:
 
     async def pause(self) -> None:
         if self._run_state != RunState.RUNNING:
-            await self._notify("⚠️ Nothing to pause.")
+            await self._notify("⚠️ Нет запущенной сессии для паузы.")
             return
 
         self._run_state = RunState.PAUSED
         self._resume_event.clear()
         self.state.paused = True
-        await self._notify("⏸ <b>Paused</b>")
+        await self._notify("⏸ <b>Сессия на паузе</b>")
 
     async def resume(self) -> None:
         if self._run_state != RunState.PAUSED:
-            await self._notify("⚠️ Not paused.")
+            await self._notify("⚠️ Сессия не на паузе.")
             return
 
         self._run_state = RunState.RUNNING
         self._resume_event.set()
         self.state.paused = False
-        await self._notify("▶️ <b>Resumed</b>")
+        await self._notify("▶️ <b>Сессия продолжена</b>")
 
     async def _process_card(
         self,
@@ -387,7 +387,7 @@ class Scheduler:
             is_letter_valid = False
             letter_error_reason = "Empty or too short cover letter"
         else:
-            stop_words = ["error", "fail", "ошибка", "gemini", "api key", "исключение", "json", "prompt", "failed"]
+            stop_words = ["error", "fail", "ошибка", "gemini", "api key", "исключение", "prompt", "failed"]
             lower_letter = cover_letter.lower()
             for stop_word in stop_words:
                 if stop_word in lower_letter:
@@ -425,27 +425,33 @@ class Scheduler:
             )
         )
 
-        await db.save_application(
-            vacancy_url=vacancy.url,
-            title=vacancy.title,
-            employer=vacancy.employer,
-            description=vacancy.description[:500],
-            cover_letter=cover_letter,
-            ai_relevance=(analysis_result.relevance if analysis_result else 0),
-            ai_analysis=(analysis_result.summary if analysis_result else ""),
-            status=result.status.value,
-            error_message=result.message,
+        is_questions_skip = (
+            result.status == ApplyStatus.ANALYZED_SKIP
+            and result.message == "requires_questions"
         )
 
-        if result.status != ApplyStatus.ERROR:
-            await db.cache_vacancy_result(
+        if not is_questions_skip:
+            await db.save_application(
                 vacancy_url=vacancy.url,
                 title=vacancy.title,
                 employer=vacancy.employer,
-                ai_relevance=analysis_result.relevance if analysis_result else 0,
-                ai_summary=analysis_result.summary if analysis_result else "",
-                result=result.status.value,
+                description=vacancy.description[:500],
+                cover_letter=cover_letter,
+                ai_relevance=(analysis_result.relevance if analysis_result else 0),
+                ai_analysis=(analysis_result.summary if analysis_result else ""),
+                status=result.status.value,
+                error_message=result.message,
             )
+
+            if result.status != ApplyStatus.ERROR:
+                await db.cache_vacancy_result(
+                    vacancy_url=vacancy.url,
+                    title=vacancy.title,
+                    employer=vacancy.employer,
+                    ai_relevance=analysis_result.relevance if analysis_result else 0,
+                    ai_summary=analysis_result.summary if analysis_result else "",
+                    result=result.status.value,
+                )
 
         self.state.vacancies_processed += 1
         await self._handle_apply_result(vacancy, result, analysis_result, cover_letter)
@@ -535,7 +541,8 @@ class Scheduler:
             self._resume_event.clear()
             self.state.paused = True
             await self._notify(
-                "🔒 <b>Captcha on apply!</b> Paused. Resume when ready.",
+                "🔒 <b>Обнаружена капча при отклике!</b> Сессия поставлена на паузу.\n"
+                "Решите капчу на сайте HH.ru (в браузере), затем нажмите «▶️ Продолжить» в меню.",
                 notify_type="error"
             )
             raise _CaptchaPause()
@@ -664,7 +671,7 @@ class Scheduler:
     def get_status_text(self) -> str:
         if self._run_state == RunState.RUNNING:
             return format_scheduler_status(
-                run_state_name="▶️ Running",
+                run_state_name="▶️ Запущен",
                 page=self.state.current_page,
                 processed=self.state.vacancies_processed,
                 applied_today=self.state.applied_today,
@@ -672,13 +679,13 @@ class Scheduler:
             )
         elif self._run_state == RunState.PAUSED:
             return format_scheduler_status(
-                run_state_name="⏸ Paused",
+                run_state_name="⏸ На паузе",
                 page=self.state.current_page,
                 processed=self.state.vacancies_processed,
                 applied_today=self.state.applied_today,
                 captcha_detected=self.state.captcha_detected,
             )
-        return "⏹ <b>Stopped</b>"
+        return "⏹ <b>Остановлен</b>"
 
 class _CaptchaPause(Exception):
     """Internal signal used to break out of the card loop on captcha."""

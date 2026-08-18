@@ -23,8 +23,24 @@ async def _error_reply(message, text: str) -> None:
 
 async def _main_menu_message(message) -> None:
     from ..keyboards import main_menu_reply_keyboard
+    from ...scheduler import manual_scheduler, monitoring_scheduler, RunState
+    from ...services.flow_entity import get_active_flow
+
+    manual_state = manual_scheduler.get_status_text()
+    if monitoring_scheduler._run_state != RunState.IDLE:
+        monitoring_state = "🟢 активен"
+    else:
+        monitoring_enabled = (await flow_db.get_setting("monitoring_mode", "false")) == "true"
+        monitoring_state = "🟢 включен" if monitoring_enabled else "🔴 выключен"
+
+    active_flow = await get_active_flow()
+    flow_line = f"📂 Поток: <b>{active_flow.name}</b>" if active_flow else "📂 Поток: <b>не выбран</b>"
+
     await message.answer(
-        "🤖 <b>AutoHH Bot Menu</b>",
+        f"🤖 <b>AutoHH — главное меню</b>\n\n"
+        f"{flow_line}\n"
+        f"▶️ Ручной режим: {manual_state}\n"
+        f"🔍 Мониторинг: <b>{monitoring_state}</b>",
         parse_mode="HTML",
         reply_markup=main_menu_reply_keyboard(),
     )
@@ -36,11 +52,7 @@ async def _main_menu_callback(callback) -> None:
         await callback.message.delete()
     except Exception:
         pass
-    await callback.message.answer(
-        "🤖 <b>AutoHH Bot Menu</b>",
-        parse_mode="HTML",
-        reply_markup=main_menu_reply_keyboard(),
-    )
+    await _main_menu_message(callback.message)
 
 
 from .common import common_router

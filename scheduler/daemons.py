@@ -134,7 +134,7 @@ class ResumeUpdaterDaemonService(BackgroundDaemon):
             )
             logger.info(f"Resume {resume_id} raised: {msg}")
             await monitoring_scheduler._notify(f"✅ Резюме успешно поднято: {msg}", "success")
-        elif "уже поднято" in msg.lower() or "заблокирована" in msg.lower():
+        elif "слишком рано" in msg.lower() or "заблокирована" in msg.lower():
             await db.set_setting(
                 f"last_resume_update_time_{resume_id}", datetime.now().isoformat()
             )

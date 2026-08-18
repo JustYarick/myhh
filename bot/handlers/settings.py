@@ -28,7 +28,7 @@ async def settings_callback(callback: CallbackQuery) -> None:
     hh_ok = hh_api.is_authenticated
     from ..keyboards import settings_keyboard
     await callback.message.edit_text(
-        "<b>Global Settings</b>",
+        "⚙️ <b>Глобальные настройки</b>",
         parse_mode="HTML",
         reply_markup=settings_keyboard(gemini_model, hh_ok, tz_offset=tz_offset),
     )
@@ -41,7 +41,7 @@ async def settings_model_callback(callback: CallbackQuery) -> None:
     await callback.answer()
     
     await callback.message.edit_text(
-        "⚙️ <b>Global Settings</b>\n\n⏳ <i>Fetching available Gemini models...</i>",
+        "⚙️ <b>Глобальные настройки</b>\n\n⏳ <i>Получаю доступные модели Gemini...</i>",
         parse_mode="HTML"
     )
     
@@ -53,13 +53,13 @@ async def settings_model_callback(callback: CallbackQuery) -> None:
     models = await list_models(settings.gemini_api_key)
     if not models:
         await callback.message.edit_text(
-            "<b>Global Settings</b>\n\n❌ Failed to fetch models. Check Gemini API key.",
+            "⚙️ <b>Глобальные настройки</b>\n\n❌ Не удалось получить модели. Проверьте API-ключ Gemini.",
             parse_mode="HTML"
         )
         return
     from ..keyboards import model_list_keyboard
     await callback.message.edit_text(
-        "<b>Select Gemini Model</b>\n* = current",
+        "⚙️ <b>Выберите модель Gemini</b>\n⭐ = текущая",
         parse_mode="HTML",
         reply_markup=model_list_keyboard(models, gemini_model),
     )
@@ -74,7 +74,7 @@ async def settings_set_model_callback(callback: CallbackQuery) -> None:
     from ...services.gemini import gemini_service
     await set_setting("gemini_model", model)
     gemini_service.set_model(model)
-    await callback.answer(f"Model set: {model}", show_alert=True)
+    await callback.answer(f"✅ Модель установлена: {model}", show_alert=True)
     from ..keyboards import settings_keyboard
     from ...services.hh_api_client import hh_api
     hh_ok = hh_api.is_authenticated
@@ -82,7 +82,7 @@ async def settings_set_model_callback(callback: CallbackQuery) -> None:
     gemini_model = await get_setting("gemini_model", "gemini-2.0-flash")
     tz_offset = int(await get_setting("monitoring_timezone_offset", "3"))
     await callback.message.edit_text(
-        "<b>Global Settings</b>",
+        "⚙️ <b>Глобальные настройки</b>",
         parse_mode="HTML",
         reply_markup=settings_keyboard(gemini_model, hh_ok, tz_offset=tz_offset),
     )
@@ -96,9 +96,9 @@ async def settings_hh_callback(callback: CallbackQuery) -> None:
     from ...services.hh_api_client import hh_api
     hh_ok = hh_api.is_authenticated
     if hh_ok:
-        text = "<b>HH Account</b>\n\nStatus: Linked"
+        text = "<b>Аккаунт HH.ru</b>\n\nСтатус: Подключен ✅"
     else:
-        text = "<b>HH Account</b>\n\nStatus: Not linked\nUse /start to login"
+        text = "<b>Аккаунт HH.ru</b>\n\nСтатус: Не подключен ❌\nПерейдите в <b>⚙️ Настройки → 📱 Авторизация HH (API)</b> для входа."
     from ..keyboards import back_keyboard
     await callback.message.edit_text(
         text,
@@ -117,8 +117,8 @@ async def send_global_settings(message: Message) -> None:
     api_ok = hh_api.is_authenticated
     api_status = "✅ Активен" if api_ok else "❌ Не настроен"
     text = (
-        f"⚙️ <b>Global Settings</b>\n\n"
-        f"🤖 Gemini model: <code>{gemini_model}</code>\n"
+        f"⚙️ <b>Глобальные настройки</b>\n\n"
+        f"🤖 Модель Gemini: <code>{gemini_model}</code>\n"
         f"📱 HH API токен: <b>{api_status}</b>\n"
         f"🌐 Часовой пояс: <b>UTC{'+' if tz_offset >= 0 else ''}{tz_offset}</b>"
     )
@@ -196,7 +196,7 @@ async def notifications_settings_message(message: Message) -> None:
     skip = (await get_setting("notify_skip", "false")) == "true"
     
     await message.answer(
-        "🔔 <b>Notification Settings</b>\n\nConfigure which events trigger Telegram notifications:",
+        "🔔 <b>Настройки уведомлений</b>\n\nВыберите, какие события будут отправлять уведомления в Telegram:",
         parse_mode="HTML",
         reply_markup=notifications_keyboard(success, error, skip)
     )
@@ -218,10 +218,68 @@ async def toggle_notification_callback(callback: CallbackQuery) -> None:
     error = (await get_setting("notify_error", "true")) == "true"
     skip = (await get_setting("notify_skip", "false")) == "true"
     
-    await callback.answer(f"{key.replace('notify_', '').capitalize()} toggled {'ON' if new_val == 'true' else 'OFF'}")
+    await callback.answer(f"{key.replace('notify_', '').capitalize()} переключен {'ВКЛ' if new_val == 'true' else 'ВЫКЛ'}")
     await callback.message.edit_reply_markup(
         reply_markup=notifications_keyboard(success, error, skip)
     )
+
+
+@settings_router.message(F.text == "🩺 Проверить подключения")
+async def health_check_message(message: Message) -> None:
+    if not await _check_access(message.from_user.id):
+        return
+    from ... import database as db
+    from ...services.hh_api_client import hh_api
+    from ...config import get_settings
+
+    lines = ["🩺 <b>Проверка подключений</b>\n"]
+
+    await message.answer(text="🩺 Проверяю подключения...")
+
+    # HH API
+    await hh_api.load_token()
+    if hh_api.is_authenticated:
+        try:
+            me = await hh_api.get_me()
+            name = (me.get("first_name") or "") + " " + (me.get("last_name") or "")
+            lines.append(f"📱 HH.ru API: <b>ОК</b> (авторизован как {name.strip()})")
+        except Exception as e:
+            lines.append(f"📱 HH.ru API: <b>Ошибка запроса</b> — {e}")
+    else:
+        lines.append("📱 HH.ru API: <b>Нет токена</b> — выполните авторизацию в настройках")
+
+    # Gemini
+    settings = get_settings()
+    try:
+        from ...services.gemini import list_models
+        models = await list_models(settings.gemini_api_key)
+        if models:
+            lines.append(f"🤖 Gemini API: <b>ОК</b> ({len(models)} моделей доступно)")
+        else:
+            lines.append("🤖 Gemini API: <b>Пустой ответ</b> — проверьте ключ")
+    except Exception as e:
+        lines.append(f"🤖 Gemini API: <b>Ошибка</b> — {e}")
+
+    # Database
+    try:
+        today = await db.get_today_stats()
+        lines.append(f"🗄 База данных: <b>ОК</b> (статистика за {today['date']})")
+    except Exception as e:
+        lines.append(f"🗄 База данных: <b>Ошибка</b> — {e}")
+
+    # Active flow
+    from ...services.flow_entity import get_active_flow
+    flow = await get_active_flow()
+    if flow:
+        lines.append(f"📂 Активный поток: <b>{flow.name}</b> (search_url: {'настроен' if flow.config.search_url else 'не настроен'}, резюме: {'есть' if flow.config.resume_id else 'нет'})")
+    else:
+        lines.append("📂 Активный поток: <b>не выбран</b>")
+
+    from ..keyboards import settings_reply_keyboard
+    await message.answer("\n".join(lines), parse_mode="HTML", reply_markup=settings_reply_keyboard(
+        api_ok=hh_api.is_authenticated,
+        tz_offset=int(await db.get_setting("monitoring_timezone_offset", "3")),
+    ))
 
 
 @settings_router.message(F.text == "🔄 Сбросить лимиты")
@@ -237,42 +295,18 @@ async def reset_limits_message(message: Message) -> None:
         await message.answer(f"❌ Не удалось сбросить лимиты: {e}")
 
 
-@settings_router.message(F.text.startswith("🔍 Мониторинг:"))
-async def toggle_monitoring_message(message: Message) -> None:
-    if not await _check_access(message.from_user.id):
+@settings_router.message(F.text.startswith("🌐 Часовой пояс:"))
+async def settings_tz_callback(callback: CallbackQuery) -> None:
+    if not await _check_access(callback.from_user.id):
         return
-    from ...database import get_setting, set_setting
-    current = (await get_setting("monitoring_mode", "false")) == "true"
-    new_val = "false" if current else "true"
-    await set_setting("monitoring_mode", new_val)
+    from ...services.flow_entity import get_setting
+    from ..keyboards import timezone_select_keyboard
+    current = int(await get_setting("monitoring_timezone_offset", "3"))
     
-    monitoring_enabled = new_val == "true"
-    monitoring_status = "ВКЛЮЧЕН" if monitoring_enabled else "ВЫКЛЮЧЕН"
-    
-
-    from ..keyboards import settings_reply_keyboard
-    gemini_model = await get_setting("gemini_model", "gemini-2.0-flash")
-    tz_offset = int(await get_setting("monitoring_timezone_offset", "3"))
-    from ...services.hh_api_client import hh_api
-    hh_ok = hh_api.is_authenticated
-    hh_status = "Linked" if hh_ok else "Not linked"
-    
-    text = (
-        f"⚙️ <b>Global Settings</b>\n\n"
-        f"🤖 Gemini model: <code>{gemini_model}</code>\n"
-        f"🔑 HH Account: <b>{hh_status}</b>\n"
-        f"🔍 Фоновый мониторинг: <b>{monitoring_status}</b> (каждые 30 минут)\n"
-        f"🌐 Часовой пояс: <b>UTC{'+' if tz_offset >= 0 else ''}{tz_offset}</b>"
-    )
-    
-    await message.answer(
-        f"🔍 Режим мониторинга теперь: <b>{monitoring_status}</b>.",
-        parse_mode="HTML"
-    )
-    await message.answer(
-        text,
+    await callback.message.edit_text(
+        "🌐 <b>Выбор часового пояса:</b>\nВыберите часовой пояс относительно UTC для корректного времени работы мониторинга.",
         parse_mode="HTML",
-        reply_markup=settings_reply_keyboard(hh_ok, tz_offset=tz_offset),
+        reply_markup=timezone_select_keyboard(current),
     )
 
 
@@ -323,7 +357,7 @@ async def set_timezone_callback(callback: CallbackQuery) -> None:
     from ..keyboards import settings_keyboard
     
     await callback.message.edit_text(
-        "<b>Global Settings</b>",
+        "⚙️ <b>Глобальные настройки</b>",
         parse_mode="HTML",
         reply_markup=settings_keyboard(gemini_model, hh_ok, tz_offset=new_val),
     )

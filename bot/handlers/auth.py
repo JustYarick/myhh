@@ -36,15 +36,15 @@ async def _show_settings_message(message: Message) -> None:
     api_status = "✅ Активен" if api_ok else "❌ Не настроен"
 
     text = (
-        f"⚙️ <b>Global Settings</b>\n\n"
-        f"🤖 Gemini model: <code>{gemini_model}</code>\n"
+        f"⚙️ <b>Глобальные настройки</b>\n\n"
+        f"🤖 Модель Gemini: <code>{gemini_model}</code>\n"
         f"📱 HH API токен: <b>{api_status}</b>"
     )
     # The keyboard now only needs to know about api_ok
     await message.answer(
         text,
         parse_mode="HTML",
-        reply_markup=settings_reply_keyboard(hh_ok=False, api_ok=api_ok),
+        reply_markup=settings_reply_keyboard(api_ok=api_ok),
     )
 
 
@@ -89,14 +89,14 @@ async def hh_api_code_handler(message: Message, state: FSMContext) -> None:
 
     code = (message.text or "").strip()
     
-    if code == "❌ Cancel Login":
+    if code == "❌ Отменить Вход":
         await state.clear()
         await message.answer("Авторизация отменена.")
         await _show_settings_message(message)
         return
 
     if not code:
-        await message.answer("Пустой код. Попробуйте ещё раз или нажмите 'Cancel Login'.")
+        await message.answer("Пустой код. Попробуйте ещё раз или нажмите 'Отменить Вход'.")
         return
 
     # Strip full URL if user pasted it instead of just the code
@@ -125,7 +125,7 @@ async def hh_api_code_handler(message: Message, state: FSMContext) -> None:
     await _show_settings_message(message)
 
 
-@auth_router.message(F.text == "🔓 Logout HH API")
+@auth_router.message(F.text == "🔓 Удалить токен HH API")
 async def hh_api_logout_message(message: Message) -> None:
     if not await _check_access(message.from_user.id):
         return
@@ -136,7 +136,7 @@ async def hh_api_logout_message(message: Message) -> None:
     )
 
 
-@auth_router.message(F.text == "⚠️ Confirm Logout")
+@auth_router.message(F.text == "⚠️ Подтвердить Выход")
 async def confirm_logout_message(message: Message) -> None:
     if not await _check_access(message.from_user.id):
         return
